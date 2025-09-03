@@ -1,0 +1,51 @@
+#include <xc.h>
+
+float data = 0;
+int conv = 0;
+char unit = 0;
+char dec1 = 0;
+char dec2 = 0;
+
+void __interrupt () ISR(void)
+{
+    ADIF = 0;
+
+    data = ADRESH;
+    data = (data * 5) / 255;
+    data = data * 100;
+    conv = data;
+
+    unit = conv / 100;
+    unit = unit + 48;
+    conv = conv % 100;
+    dec1 = conv / 10;
+    dec1 = dec1 + 48;
+    dec2 = conv % 10;
+    dec2 = dec2 + 48;
+
+    // Removed lcddata() and lcdcmd() calls
+
+    for (int i = 0; i < 200; i++)      // Equivalent to MSDelay(200)
+        for (int j = 0; j < 135; j++);
+
+    GODONE = 1;
+}
+
+void main(void)
+{
+    TRISA0 = 1;
+    TRISB = 0;
+    TRISE = 0;
+
+    ADCON0 = 0b00000001;
+    ADCON1 = 0b00001110;
+    ADCON2 = 0b00000000;
+
+    GIE = 1;
+    PEIE = 1;
+    ADIE = 1;
+
+    GODONE = 1;
+
+    while (1);
+}

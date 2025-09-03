@@ -1,0 +1,176 @@
+// PIC18F458 Configuration Bit Settings
+
+// 'C' source line config statements
+
+// CONFIG1H
+#pragma config OSC = HS         // Oscillator Selection bits (HS oscillator)
+#pragma config OSCS = OFF       // Oscillator System Clock Switch Enable bit (Oscillator system clock switch option is disabled (main oscillator is source))
+
+// CONFIG2L
+#pragma config PWRT = OFF       // Power-up Timer Enable bit (PWRT disabled)
+#pragma config BOR = OFF        // Brown-out Reset Enable bit (Brown-out Reset disabled)
+#pragma config BORV = 25        // Brown-out Reset Voltage bits (VBOR set to 2.5V)
+
+// CONFIG2H
+#pragma config WDT = OFF        // Watchdog Timer Enable bit (WDT disabled (control is placed on the SWDTEN bit))
+#pragma config WDTPS = 128      // Watchdog Timer Postscale Select bits (1:128)
+
+// CONFIG4L
+#pragma config STVR = OFF       // Stack Full/Underflow Reset Enable bit (Stack Full/Underflow will not cause Reset)
+#pragma config LVP = OFF        // Low-Voltage ICSP Enable bit (Low-Voltage ICSP disabled)
+
+// CONFIG5L
+#pragma config CP0 = OFF        // Code Protection bit (Block 0 (000200-001FFFh) not code protected)
+#pragma config CP1 = OFF        // Code Protection bit (Block 1 (002000-003FFFh) not code protected)
+#pragma config CP2 = OFF        // Code Protection bit (Block 2 (004000-005FFFh) not code protected)
+#pragma config CP3 = OFF        // Code Protection bit (Block 3 (006000-007FFFh) not code protected)
+
+// CONFIG5H
+#pragma config CPB = OFF        // Boot Block Code Protection bit (Boot Block (000000-0001FFh) not code protected)
+#pragma config CPD = OFF        // Data EEPROM Code Protection bit (Data EEPROM not code protected)
+
+// CONFIG6L
+#pragma config WRT0 = OFF       // Write Protection bit (Block 0 (000200-001FFFh) not write protected)
+#pragma config WRT1 = OFF       // Write Protection bit (Block 1 (002000-003FFFh) not write protected)
+#pragma config WRT2 = OFF       // Write Protection bit (Block 2 (004000-005FFFh) not write protected)
+#pragma config WRT3 = OFF       // Write Protection bit (Block 3 (006000-007FFFh) not write protected)
+
+// CONFIG6H
+#pragma config WRTC = OFF       // Configuration Register Write Protection bit (Configuration registers (300000-3000FFh) not write protected)
+#pragma config WRTB = OFF       // Boot Block Write Protection bit (Boot Block (000000-0001FFh) not write protected)
+#pragma config WRTD = OFF       // Data EEPROM Write Protection bit (Data EEPROM not write protected)
+
+// CONFIG7L
+#pragma config EBTR0 = OFF      // Table Read Protection bit (Block 0 (000200-001FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR1 = OFF      // Table Read Protection bit (Block 1 (002000-003FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR2 = OFF      // Table Read Protection bit (Block 2 (004000-005FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR3 = OFF      // Table Read Protection bit (Block 3 (006000-007FFFh) not protected from Table Reads executed in other blocks)
+
+// CONFIG7H
+#pragma config EBTRB = OFF      // Boot Block Table Read Protection bit (Boot Block (000000-0001FFh) not protected from Table Reads executed in other blocks)
+#include <xc.h>
+#include <stdio.h>
+
+#define ldata PORTB
+#define rs LATE2
+#define rw LATE1
+#define en LATE0
+
+// Function Prototypes
+void lcdcmd(unsigned char);
+void lcddata(unsigned char);
+void lcd_init(void);
+void delay(int);
+unsigned int read_adc(void);
+void display_temp(float);
+
+void __interrupt() ISR(void) {
+    if (ADRESH > 127) {
+        ECCPR1L = ADRESH;
+        CCPR1L = 0;
+    } else {
+        CCPR1L = ADRESH;
+        ECCPR1L = 0;
+    }
+
+    ADIF = 0;           // Corrected: Clear ADC interrupt flag
+    GODONE = 1;         // Start next ADC conversion
+}
+
+void main(void) {
+    TRISB = 0x00;       // LCD data lines as output
+    TRISE = 0x00;       // LCD control lines as output
+    TRISA0 = 1;         // RA0 (AN0) as input
+    TRISD4 = 0;
+    TRISC2 = 0;
+    TRISA0 = 1;
+    AN0 = 1;
+
+    ADCON0 = 0b00000001; // Enable ADC, channel 0
+    ADCON1 = 0b00000000;
+
+    CCP1CON = 0b00001100;
+    ECCP1CON = 0b00001100;
+    T2CON = 0b00000001;
+    PR2 = 249;
+    TMR2ON = 1;
+
+//    ADIF = 0;
+//    GIE = 1;
+//    ADIE = 1;
+//    PEIE = 1;
+//    ADON = 1;
+//    GODONE = 1;
+
+    lcd_init();         // Initialize LCD
+
+    while (1) {
+        unsigned int adc_val = read_adc();
+        float voltage = adc_val * 5.0 / 1024.0;
+        float temp = voltage * 100.0; // LM35
+
+        display_temp(temp);
+        delay(1000); // 1 second delay
+    }
+}
+
+void delay(int ms) {
+    for (int i = 0; i < ms; i++)
+        for (int j = 0; j < 100; j++);
+}
+
+unsigned int read_adc(void) {
+    delay(2);
+    ADCON0bits.GO = 1;
+    while (ADCON0bits.GO);
+    return ((ADRESH << 8) + ADRESL);
+}
+
+void lcd_init(void) {
+    rw = 0;
+    lcdcmd(0x38);
+    lcdcmd(0x0C);
+    lcdcmd(0x06);
+    lcdcmd(0x01);
+    lcdcmd(0x80);
+}
+
+void lcdcmd(unsigned char cmd) {
+    ldata = cmd;
+    rs = 0;
+    en = 1;
+    delay(2);
+    en = 0;
+}
+
+void lcddata(unsigned char data) {
+    ldata = data;
+    rs = 1;
+    en = 1;
+    delay(2);
+    en = 0;
+}
+
+void display_temp(float temp) {
+    char str[16];
+    lcdcmd(0x01);           // Clear LCD
+    lcdcmd(0x80);           // Cursor to line 1
+    sprintf(str, "Temp: %.1fC", temp);
+    for (int i = 0; str[i] != '\0'; i++) {
+        lcddata(str[i]);
+    }
+
+    lcdcmd(0xC0);           // Cursor to line 2
+    if (temp > 30.0) {
+        sprintf(str, "Fan ON       ");
+    } else if (temp < 20.0) {
+        sprintf(str, "Heater ON    ");
+    } else {
+        sprintf(str, "System OFF   ");
+    }
+
+    for (int i = 0; str[i] != '\0'; i++) {
+        lcddata(str[i]);
+    }
+}
+

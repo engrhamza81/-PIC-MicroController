@@ -1,0 +1,83 @@
+#define _XTAL_FREQ 64000000 // or 16000000 depending on config
+
+#define DHT11_ERROR_TIMEOUT 253
+#define DHT11_ERROR_CHECKSUM 254
+uint8_t temp, hum, status;
+uint8_t DHT11_Read(uint8_t *temperature, uint8_t *humidity);
+void startSignal(void);
+uint8_t readByte(void);
+
+
+TRISBbits.TRISB0 = 1; // DHT11 pin as input by default
+ANSELBbits.ANSELB0 = 0;
+
+uint8_t DHT11_Read(uint8_t *temperature, uint8_t *humidity)
+{
+    uint8_t data[5] = {0};
+    startSignal();
+
+    __delay_us(80);
+    if (!PORTBbits.RB0) return DHT11_ERROR_TIMEOUT;
+    __delay_us(80);
+    if (PORTBbits.RB0) return DHT11_ERROR_TIMEOUT;
+
+    for (uint8_t i = 0; i < 5; i++)
+        data[i] = readByte();
+
+    if (data[4] != ((data[0] + data[1] + data[2] + data[3]) & 0xFF))
+        return DHT11_ERROR_CHECKSUM;
+
+    *humidity = data[0];
+    *temperature = data[2];
+
+    return 0; // Success
+}
+
+void startSignal(void)
+{
+    TRISBbits.TRISB0 = 0;
+    LATBbits.LATB0 = 0;
+    __delay_ms(18);
+    LATBbits.LATB0 = 1;
+    __delay_us(40);
+    TRISBbits.TRISB0 = 1;
+}
+
+uint8_t readByte(void)
+{
+    uint8_t value = 0;
+    for (uint8_t i = 0; i < 8; i++)
+    {
+        while (!PORTBbits.RB0);
+        __delay_us(50);
+        if (PORTBbits.RB0)
+            value |= (1 << (7 - i));
+        while (PORTBbits.RB0);
+    }
+    return value;
+}
+
+
+
+void main(void){
+
+
+status = DHT11_Read(&temp, &hum);
+
+        if (status == 0)
+        {
+            char buffer[32];
+            sprintf(buffer, "Temp: %dC, Humidity: %d%%\r\n", temp, hum);
+            UART_Write_Text(buffer);
+        }
+        else if (status == DHT11_ERROR_TIMEOUT)
+        {
+            UART_Write_Text("Error: Timeout\r\n");
+        }
+        else if (status == DHT11_ERROR_CHECKSUM)
+        {
+            UART_Write_Text("Error: Checksum\r\n");
+        }
+
+        __delay_ms(2000); // Wait 2 seconds between reads
+}

@@ -1,0 +1,232 @@
+#include <xc.h>
+#include <stdio.h>
+
+//----- LCD Definitions -----//
+#define ldata PORTB
+#define rs    LATE2
+#define rw    LATE1
+#define en    LATE0
+
+//----- PID Structure -----//
+typedef struct {
+    float Kp, Ki, Kd;
+    float setpoint;
+    float integral;
+    float previous_error;
+} PID;
+
+//----- Global Variables -----//
+float measured_temp = 25.0;      // Initial temperature
+float elapsed_time = 0.0;        // Process time in seconds
+unsigned int isr_counter = 0;    // For time tracking
+
+//----- Phase Parameters -----//
+enum { PREHEAT, SOAK, REFLOW_RAMP, REFLOW_HOLD, COOLING } phase = PREHEAT;
+float phase_start_time = 0.0;
+PID pid;
+
+//----- Profile Constants -----//
+const float preheat_rate = 0.5;    // °C/sec
+const float soak_temp = 150.0;
+const float reflow_rate = 1.5;
+const float max_temp = 220.0;
+
+//----- Function Prototypes -----//
+void delay(int ms);
+void lcdcmd(unsigned char value);
+void lcddata(unsigned char value);
+void lcd_init(void);
+void lcd_print_uint8(unsigned char v);
+void PID_Init(PID *pid, float Kp, float Ki, float Kd, float setpoint);
+float PID_Compute(PID *pid, float measured, float dt);
+
+//----- Interrupt Service Routine -----//
+void __interrupt() ISR(void) {
+    if (ADIF) {
+        // Convert ADC to temperature (0-250°C range)
+        measured_temp = (ADRESH * 250.0) / 255.0;
+        
+        // Update control every second (4*250ms = 1sec)
+        if(++isr_counter >= 4) {
+            elapsed_time += 1.0;
+            isr_counter = 0;
+
+            // Phase state machine
+            switch(phase) {
+                case PREHEAT:
+                    pid.setpoint = 25.0 + preheat_rate * elapsed_time;
+                    if(pid.setpoint >= soak_temp) {
+                        phase = SOAK;
+                        phase_start_time = elapsed_time;
+                        PID_Init(&pid, 1.0, 0.02, 0.05, soak_temp);
+                    }
+                    break;
+                
+                case SOAK:
+                    if(elapsed_time - phase_start_time >= 90.0) {
+                        phase = REFLOW_RAMP;
+                        phase_start_time = elapsed_time;
+                        PID_Init(&pid, 3.0, 0.01, 0.2, soak_temp);
+                    }
+                    break;
+                
+                case REFLOW_RAMP:
+                    pid.setpoint = soak_temp + reflow_rate * (elapsed_time - phase_start_time);
+                    if(pid.setpoint >= max_temp) {
+                        phase = REFLOW_HOLD;
+                        phase_start_time = elapsed_time;
+                        PID_Init(&pid, 2.0, 0.05, 0.1, max_temp);
+                    }
+                    break;
+                
+                case REFLOW_HOLD:
+                    if(elapsed_time - phase_start_time >= 50.0) {
+                        phase = COOLING;
+                        PID_Init(&pid, 0, 0, 0, 25.0);
+                    }
+                    break;
+                
+                case COOLING:
+                    break;
+            }
+
+            // Compute PID output and update PWM
+            float output = PID_Compute(&pid, measured_temp, 1.0);
+            unsigned char pwm_value = (output > 0) ? (output > 255 ? 255 : (unsigned char)output) : 0;
+
+            // PWM Control Logic
+            if(phase != COOLING) {
+                CCPR1L = pwm_value;   // Heater PWM
+                ECCPR1L = 0;          // Fan OFF
+            } else {
+                CCPR1L = 0;           // Heater OFF
+                ECCPR1L = 255;        // Fan at 100%
+            }
+        }
+
+        // Update LCD Display
+        lcdcmd(0x01);
+        lcdcmd(0x80);
+        lcddata('T'); lcddata(':'); 
+        lcd_print_uint8((unsigned char)measured_temp);
+        
+        lcdcmd(0xC0);
+        const char* phase_str;
+        switch(phase) {
+            case PREHEAT: phase_str = "Preheat "; break;
+            case SOAK:    phase_str = "Soak    "; break;
+            case REFLOW_RAMP: phase_str = "ReflowR"; break;
+            case REFLOW_HOLD: phase_str = "ReflowH"; break;
+            default:     phase_str = "Cooling "; break;
+        }
+        for(int i=0; i<8; i++) lcddata(phase_str[i]);
+
+        ADIF = 0;
+        GODONE = 1;
+    }
+}
+
+//----- Main Program -----//
+void main(void) {
+    // Peripheral Initialization
+    TRISB = 0x00;  // LCD data port
+    TRISE = 0x00;  // LCD control pins
+    TRISD4 = 0;    // Heater PWM (CCP1)
+    TRISC2 = 0;    // Fan PWM (ECCP1)
+    TRISA0 = 1;    // Analog input
+    ANSEL = 0x01;  // Enable AN0
+
+    // PWM Configuration
+    CCP1CON  = 0b00001100;   // PWM mode: CCP1 (Heater)
+    ECCP1CON = 0b00001100;   // PWM mode: ECCP1 (Fan)
+    T2CON    = 0b00000001;   // Timer2 prescaler = 4
+    PR2      = 249;          // PWM period register
+    TMR2ON   = 1;            // Enable Timer2
+
+    // ADC Configuration
+    ADCON0 = 0b00000001;     // ADC enabled, AN0
+    ADCON1 = 0b00000000;     // Right justified, VDD reference
+
+    // PID Initialization
+    PID_Init(&pid, 2.0, 0.05, 0.1, measured_temp);
+
+    // LCD Initialization
+    lcd_init();
+
+    // Interrupt Configuration
+    ADIF = 0;
+    ADIE = 1;
+    PEIE = 1;
+    GIE = 1;
+    ADON = 1;
+    GODONE = 1;
+
+    while(1);  // Main loop - all processing done in ISR
+}
+
+//----- PID Functions -----//
+void PID_Init(PID *pid, float Kp, float Ki, float Kd, float setpoint) {
+    pid->Kp = Kp;
+    pid->Ki = Ki;
+    pid->Kd = Kd;
+    pid->setpoint = setpoint;
+    pid->integral = 0;
+    pid->previous_error = 0;
+}
+
+float PID_Compute(PID *pid, float measured, float dt) {
+    float error = pid->setpoint - measured;
+    pid->integral += error * dt;
+    float derivative = (error - pid->previous_error) / dt;
+    pid->previous_error = error;
+    return (pid->Kp * error) + (pid->Ki * pid->integral) + (pid->Kd * derivative);
+}
+
+//----- LCD Functions -----//
+void delay(int ms) {
+    for(int i = 0; i < ms; i++)
+        for(int j = 0; j < 100; j++);
+}
+
+void lcdcmd(unsigned char value) {
+    ldata = value;
+    rs = 0;
+    en = 1;
+    delay(2);
+    en = 0;
+    delay(2);
+}
+
+void lcddata(unsigned char value) {
+    ldata = value;
+    rs = 1;
+    en = 1;
+    delay(2);
+    en = 0;
+    delay(2);
+}
+
+void lcd_init(void) {
+    rw = 0;
+    delay(50);
+    lcdcmd(0x38);
+    delay(5);
+    lcdcmd(0x0C);
+    delay(5);
+    lcdcmd(0x06);
+    delay(5);
+    lcdcmd(0x01);
+    delay(5);
+    lcdcmd(0x80);
+    delay(5);
+}
+
+void lcd_print_uint8(unsigned char v) {
+    unsigned char hundreds = v / 100;
+    unsigned char tens = (v % 100) / 10;
+    unsigned char ones = v % 10;
+
+    if(hundreds) lcddata('0' + hundreds);
+    if(tens || hundreds) lcddata('0' + tens);
+    lcddata('0' + ones);
+}

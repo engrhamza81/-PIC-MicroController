@@ -1,0 +1,127 @@
+    // Boot Block Table Read Protection bit (Boot Block (000000-0007FFh) not protected from table reads executed in other blocks)
+
+// PIC18F46K20 Configuration Bit Settings
+
+// 'C' source line config statements
+
+// CONFIG1H
+#pragma config FOSC = HS        // Oscillator Selection bits (HS oscillator)
+#pragma config FCMEN = OFF      // Fail-Safe Clock Monitor Enable bit (Fail-Safe Clock Monitor disabled)
+#pragma config IESO = OFF       // Internal/External Oscillator Switchover bit (Oscillator Switchover mode disabled)
+
+// CONFIG2L
+#pragma config PWRTEN = ON      // Power-up Timer Enable bit (PWRT enabled)
+#pragma config BOREN = OFF      // Brown-out Reset Enable bits (Brown-out Reset disabled in hardware and software)
+#pragma config BORV = 18        // Brown Out Reset Voltage bits (VBOR set to 1.8 V nominal)
+
+// CONFIG2H
+#pragma config WDTEN = OFF      // Watchdog Timer Enable bit (WDT is controlled by SWDTEN bit of the WDTCON register)
+#pragma config WDTPS = 32768    // Watchdog Timer Postscale Select bits (1:32768)
+
+// CONFIG3H
+#pragma config CCP2MX = PORTC   // CCP2 MUX bit (CCP2 input/output is multiplexed with RC1)
+#pragma config PBADEN = ON      // PORTB A/D Enable bit (PORTB<4:0> pins are configured as analog input channels on Reset)
+#pragma config LPT1OSC = OFF    // Low-Power Timer1 Oscillator Enable bit (Timer1 configured for higher power operation)
+#pragma config HFOFST = ON      // HFINTOSC Fast Start-up (HFINTOSC starts clocking the CPU without waiting for the oscillator to stablize.)
+#pragma config MCLRE = OFF      // MCLR Pin Enable bit (RE3 input pin enabled; MCLR disabled)
+
+// CONFIG4L
+#pragma config STVREN = OFF     // Stack Full/Underflow Reset Enable bit (Stack full/underflow will not cause Reset)
+#pragma config LVP = ON         // Single-Supply ICSP Enable bit (Single-Supply ICSP enabled)
+#pragma config XINST = OFF      // Extended Instruction Set Enable bit (Instruction set extension and Indexed Addressing mode disabled (Legacy mode))
+
+// CONFIG5L
+#pragma config CP0 = OFF        // Code Protection Block 0 (Block 0 (000800-003FFFh) not code-protected)
+#pragma config CP1 = OFF        // Code Protection Block 1 (Block 1 (004000-007FFFh) not code-protected)
+#pragma config CP2 = OFF        // Code Protection Block 2 (Block 2 (008000-00BFFFh) not code-protected)
+#pragma config CP3 = OFF        // Code Protection Block 3 (Block 3 (00C000-00FFFFh) not code-protected)
+
+// CONFIG5H
+#pragma config CPB = OFF        // Boot Block Code Protection bit (Boot block (000000-0007FFh) not code-protected)
+#pragma config CPD = OFF        // Data EEPROM Code Protection bit (Data EEPROM not code-protected)
+
+// CONFIG6L
+#pragma config WRT0 = OFF       // Write Protection Block 0 (Block 0 (000800-003FFFh) not write-protected)
+#pragma config WRT1 = OFF       // Write Protection Block 1 (Block 1 (004000-007FFFh) not write-protected)
+#pragma config WRT2 = OFF       // Write Protection Block 2 (Block 2 (008000-00BFFFh) not write-protected)
+#pragma config WRT3 = OFF       // Write Protection Block 3 (Block 3 (00C000h-00FFFFh) not write-protected)
+
+// CONFIG6H
+#pragma config WRTC = OFF       // Configuration Register Write Protection bit (Configuration registers (300000-3000FFh) not write-protected)
+#pragma config WRTB = OFF       // Boot Block Write Protection bit (Boot Block (000000-0007FFh) not write-protected)
+#pragma config WRTD = OFF       // Data EEPROM Write Protection bit (Data EEPROM not write-protected)
+
+// CONFIG7L
+#pragma config EBTR0 = OFF      // Table Read Protection Block 0 (Block 0 (000800-003FFFh) not protected from table reads executed in other blocks)
+#pragma config EBTR1 = OFF      // Table Read Protection Block 1 (Block 1 (004000-007FFFh) not protected from table reads executed in other blocks)
+#pragma config EBTR2 = OFF      // Table Read Protection Block 2 (Block 2 (008000-00BFFFh) not protected from table reads executed in other blocks)
+#pragma config EBTR3 = OFF      // Table Read Protection Block 3 (Block 3 (00C000-00FFFFh) not protected from table reads executed in other blocks)
+
+// CONFIG7H
+#pragma config EBTRB = OFF      // Boot Block Table Read Protection bit (Boot Block (000000-0007FFh) not protected from table reads executed in other blocks)
+
+// #pragma config statements should precede project file includes.
+// Use project enums instead of #define for ON and OFF.
+
+#include <xc.h>
+#define _XTAL_FREQ 4000000  // Define system frequency (adjust per MCU)
+
+// Define step sequences for the stepper motors
+const unsigned char motor1Steps[4] = {0x01, 0x02, 0x04, 0x08}; // Sequence for Motor 1
+const unsigned char motor2Steps[4] = {0x10, 0x20, 0x40, 0x80}; // Sequence for Motor 2
+
+// Delay function to control speed
+void DELAY(int ms) {
+    for (int i = 0; i < ms; i++) {
+        for (int j = 0; j < 170; j++) {
+            // NOPs to create delay
+        }
+    }
+}
+
+// Function to drive Motor 1 (using lower nibble of PORTD)
+void driveMotor1(unsigned char step) {
+    LATD = (LATD & 0xF0) | (step & 0x0F); // Clear lower nibble and set new step
+}
+
+// Function to drive Motor 2 (using upper nibble of PORTD)
+void driveMotor2(unsigned char step) {
+    LATD = (LATD & 0x0F) | (step & 0xF0); // Clear upper nibble and set new step
+}
+
+void main(void) {
+    // Configure PORTD as output
+    TRISD = 0;  // Set PORTD as output
+    LATD = 0x00; // Initialize PORTD to 0
+
+    // Speed control variables (delay between steps, in milliseconds)
+    int motor1Speed = 500; // Delay in ms for Motor 1 (slower motor)
+    int motor2Speed = 300; // Delay in ms for Motor 2 (faster motor)
+
+    while(1) {
+        // Control Motor 1 independently
+        for (int i = 0; i < 4; i++) {
+            driveMotor1(motor1Steps[i]); // Drive Motor 1
+            DELAY(motor1Speed); // Delay for controlling speed of Motor 1
+        }
+
+        // Control Motor 2 independently
+        for (int i = 0; i < 4; i++) {
+            driveMotor2(motor2Steps[i]); // Drive Motor 2
+            DELAY(motor2Speed); // Delay for controlling speed of Motor 2
+        }
+
+        // Optionally, you can reverse directions or add other control logic
+        // Reversing Motor 1 direction
+        for (int i = 3; i >= 0; i--) {
+            driveMotor1(motor1Steps[i]); // Reverse Motor 1
+            DELAY(motor1Speed); // Delay for controlling speed of Motor 1
+        }
+
+        // Reversing Motor 2 direction
+        for (int i = 3; i >= 0; i--) {
+            driveMotor2(motor2Steps[i]); // Reverse Motor 2
+            DELAY(motor2Speed); // Delay for controlling speed of Motor 2
+        }
+    }
+}

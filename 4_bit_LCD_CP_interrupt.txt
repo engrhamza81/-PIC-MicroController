@@ -1,0 +1,335 @@
+// PIC18F458 Configuration Bit Settings
+// 'C' source line config statements
+// CONFIG1H
+#pragma config OSC = HS         // Oscillator Selection bits (HS oscillator)
+#pragma config OSCS = OFF       // Oscillator System Clock Switch Enable bit (Oscillator system clock switch option is disabled (main oscillator is source))
+// CONFIG2L
+#pragma config PWRT = OFF       // Power-up Timer Enable bit (PWRT disabled)
+#pragma config BOR = OFF        // Brown-out Reset Enable bit (Brown-out Reset disabled)
+#pragma config BORV = 25        // Brown-out Reset Voltage bits (VBOR set to 2.5V)
+// CONFIG2H
+#pragma config WDT = OFF        // Watchdog Timer Enable bit (WDT disabled (control is placed on the SWDTEN bit))
+#pragma config WDTPS = 128      // Watchdog Timer Postscale Select bits (1:128)
+// CONFIG4L
+#pragma config STVR = OFF       // Stack Full/Underflow Reset Enable bit (Stack Full/Underflow will not cause Reset)
+#pragma config LVP = OFF        // Low-Voltage ICSP Enable bit (Low-Voltage ICSP disabled)
+// CONFIG5L
+#pragma config CP0 = OFF        // Code Protection bit (Block 0 (000200-001FFFh) not code protected)
+#pragma config CP1 = OFF        // Code Protection bit (Block 1 (002000-003FFFh) not code protected)
+#pragma config CP2 = OFF        // Code Protection bit (Block 2 (004000-005FFFh) not code protected)
+#pragma config CP3 = OFF        // Code Protection bit (Block 3 (006000-007FFFh) not code protected)
+// CONFIG5H
+#pragma config CPB = OFF        // Boot Block Code Protection bit (Boot Block (000000-0001FFh) not code protected)
+#pragma config CPD = OFF        // Data EEPROM Code Protection bit (Data EEPROM not code protected)
+// CONFIG6L
+#pragma config WRT0 = OFF       // Write Protection bit (Block 0 (000200-001FFFh) not write protected)
+#pragma config WRT1 = OFF       // Write Protection bit (Block 1 (002000-003FFFh) not write protected)
+#pragma config WRT2 = OFF       // Write Protection bit (Block 2 (004000-005FFFh) not write protected)
+#pragma config WRT3 = OFF       // Write Protection bit (Block 3 (006000-007FFFh) not write protected)
+// CONFIG6H
+#pragma config WRTC = OFF       // Configuration Register Write Protection bit (Configuration registers (300000-3000FFh) not write protected)
+#pragma config WRTB = OFF       // Boot Block Write Protection bit (Boot Block (000000-0001FFh) not write protected)
+#pragma config WRTD = OFF       // Data EEPROM Write Protection bit (Data EEPROM not write protected)
+// CONFIG7L
+#pragma config EBTR0 = OFF      // Table Read Protection bit (Block 0 (000200-001FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR1 = OFF      // Table Read Protection bit (Block 1 (002000-003FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR2 = OFF      // Table Read Protection bit (Block 2 (004000-005FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR3 = OFF      // Table Read Protection bit (Block 3 (006000-007FFFh) not protected from Table Reads executed in other blocks)
+// CONFIG7H
+#pragma config EBTRB = OFF      // Boot Block Table Read Protection bit (Boot Block (000000-0001FFh) not protected from Table Reads executed in other blocks)
+
+
+#include <xc.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <math.h>
+
+#define _XTAL_FREQ 4000000
+
+// LCD and control pins
+#define ldata LATB
+#define rs    LATE2
+#define rw    LATE1
+#define en    LATE0
+#define LCD_DATA_MASK 0xF0
+
+#define DQ_DIR  TRISAbits.TRISA4
+#define DQ_PIN  PORTAbits.RA4
+#define DQ_LAT  LATAbits.LATA4
+
+// Globals
+unsigned int currentSetpointIndex = 0;
+float currentTemp = 25.0;
+int Kp = 5;
+volatile uint8_t running = 0;
+
+// Reflow setpoints
+const float setpoints[48] = {
+    12.5, 15, 17.5, 20, 22.5, 25, 27.5, 30, 32.5, 35, 37.5, 40, 42.5, 45, 47.5, 50,
+    52.5, 55, 57.5, 60, 62.5, 65, 67.5, 70, 72.5, 75,     // Preheat
+    75, 77.5, 80, 82.5, 85, 87.5, 90, 90, 90, 90, 90, 90, // Soak
+    92.5, 95, 97.5, 100, 102.5, 105, 107.5, 110,          // Reflow
+    107.5, 105                                            // Cooling
+};
+
+// Function Prototypes
+void lcd_init(void);
+void lcdcmd(unsigned char);
+void lcddata(unsigned char);
+void lcd_print_uint8(unsigned char);
+void lcd_print_str(const char*);
+void delay(int);
+float DS18B20_ReadTemp(void);
+void Initialize_UART(void);
+void UART_SendString(const char*);
+void Send_Serial_Data(void);
+
+// Interrupt
+void __interrupt() ISR(void) {
+    // Toggle running mode on RB0 (INT0)
+    if (INT0IF == 1) {
+        running ^= 1;  // Toggle 0 <-> 1
+        INT0IF = 0;
+    }
+
+    if (TMR0IF == 1 && running) {
+        TMR0 = 26437;
+        TMR0IF = 0;
+        currentSetpointIndex++;
+        if (currentSetpointIndex >= 48) {
+            TMR0IE = 0;
+            CCPR1L = 0;
+            ECCPR1L = 0;
+        }
+    }
+
+    if (ADIF == 1) {
+        Kp = 1 + (ADRESH >> 3);
+        ADIF = 0;
+        GODONE = 1;
+    }
+}
+
+
+// OneWire + DS18B20
+uint8_t OneWire_Reset(void) {
+    DQ_DIR = 0; DQ_LAT = 0; __delay_us(480);
+    DQ_DIR = 1; __delay_us(70);
+    uint8_t presence = !DQ_PIN;
+    __delay_us(410);
+    return presence;
+}
+
+void OneWire_WriteBit(uint8_t bit) {
+    DQ_DIR = 0; DQ_LAT = 0;
+    if (bit) __delay_us(6); else __delay_us(60);
+    DQ_DIR = 1;
+    if (bit) __delay_us(64); else __delay_us(10);
+}
+
+uint8_t OneWire_ReadBit(void) {
+    uint8_t bit;
+    DQ_DIR = 0; DQ_LAT = 0; __delay_us(2);
+    DQ_DIR = 1; __delay_us(10);
+    bit = DQ_PIN;
+    __delay_us(50);
+    return bit;
+}
+
+void OneWire_WriteByte(uint8_t data) {
+    for (uint8_t i = 0; i < 8; i++) OneWire_WriteBit(data & (1 << i));
+}
+
+uint8_t OneWire_ReadByte(void) {
+    uint8_t data = 0;
+    for (uint8_t i = 0; i < 8; i++)
+        if (OneWire_ReadBit()) data |= (1 << i);
+    return data;
+}
+
+float DS18B20_ReadTemp(void) {
+    if (!OneWire_Reset()) return -1000.0;
+    OneWire_WriteByte(0xCC);
+    OneWire_WriteByte(0x44);
+    __delay_ms(750);
+    if (!OneWire_Reset()) return -1000.0;
+    OneWire_WriteByte(0xCC);
+    OneWire_WriteByte(0xBE);
+    uint8_t LSB = OneWire_ReadByte();
+    uint8_t MSB = OneWire_ReadByte();
+    int16_t raw = (MSB << 8) | LSB;
+    return raw * 0.0625;
+}
+
+// UART
+void Initialize_UART(void) {
+    SPEN = 1; TXEN = 1; SYNC = 0; BRGH = 1;
+    SPBRG = 25; // ~9600 bps for 4 MHz
+}
+
+void UART_SendChar(char c) {
+    while (!TXSTAbits.TRMT);
+    TXREG = c;
+}
+
+void UART_SendString(const char* str) {
+    while (*str) UART_SendChar(*str++);
+}
+
+void Send_Serial_Data(void) {
+    char buffer[50];
+    sprintf(buffer, "Set: %.1f, Temp: %.1f, Kp: %d\r\n", 
+            setpoints[currentSetpointIndex], currentTemp, Kp);
+    UART_SendString(buffer);
+}
+
+// LCD
+void lcd_init(void) {
+    rw = 0;
+    delay(20);
+
+    // 4-bit mode initialization
+    LATB = (LATB & ~LCD_DATA_MASK) | 0x30;
+    rs = 0; en = 1; delay(1); en = 0; delay(5);
+    LATB = (LATB & ~LCD_DATA_MASK) | 0x30;
+    en = 1; delay(1); en = 0; delay(5);
+    LATB = (LATB & ~LCD_DATA_MASK) | 0x20;
+    en = 1; delay(1); en = 0; delay(5);
+
+    lcdcmd(0x28); // Function set: 4-bit, 2 line, 5x8 dots
+    lcdcmd(0x0C); // Display ON, cursor OFF
+    lcdcmd(0x06); // Entry mode
+    lcdcmd(0x01); // Clear display
+    delay(2);
+}
+
+void lcdcmd(unsigned char value) {
+    LATB = (LATB & ~LCD_DATA_MASK) | (value & 0xF0); // upper nibble
+    rs = 0; en = 1; delay(1); en = 0; delay(1);
+    LATB = (LATB & ~LCD_DATA_MASK) | ((value << 4) & 0xF0); // lower nibble
+    rs = 0; en = 1; delay(1); en = 0; delay(1);
+}
+
+void lcddata(unsigned char value) {
+    LATB = (LATB & ~LCD_DATA_MASK) | (value & 0xF0); // upper nibble
+    rs = 1; en = 1; delay(1); en = 0; delay(1);
+    LATB = (LATB & ~LCD_DATA_MASK) | ((value << 4) & 0xF0); // lower nibble
+    rs = 1; en = 1; delay(1); en = 0; delay(1);
+}
+
+void lcd_print_uint8(unsigned char v) {
+    if (v >= 100) lcddata('0' + v / 100);
+    if (v >= 10) lcddata('0' + (v / 10) % 10);
+    lcddata('0' + v % 10);
+}
+
+void lcd_print_str(const char *str) {
+    while (*str) lcddata(*str++);
+}
+
+void delay(int ms) {
+    for (int i = 0; i < ms; i++)
+        for (int j = 0; j < 50; j++);
+}
+
+// Main
+void main(void) {
+    TRISB = 0x0F; // RB0-RB3 input (free), RB4-RB7 output for LCD
+    TRISE = 0x00;
+    TRISD4 = 0; TRISC2 = 0;
+    TRISA0 = 1; TRISA4 = 1;
+    AN0 = 1;
+
+    TRISBbits.TRISB0 = 1;  // RB0 input
+    INTCON2bits.INTEDG0 = 1; // Interrupt on rising edge
+    INTCONbits.INT0IF = 0; // Clear flag
+    INTCONbits.INT0IE = 1; // Enable INT0
+
+    
+    // ADC setup
+    ADCON0 = 0B00000000;
+    ADCON1 = 0B00000000;
+
+    // PWM
+    CCP1CON = 0B00001100;
+    ECCP1CON = 0B00001100;
+    T2CON = 0B00000001;
+    PR2 = 249;
+    TMR2ON = 1;
+
+    // Timer0
+    T0CON = 0B00000110;
+    TMR0 = 26437;
+    TMR0ON = 1;
+     lcd_init();
+    Initialize_UART();
+       GIE = 1; // Enable global interrupt
+        PEIE = 1; // Enable peripheral interrupt
+
+      // Interrupt setup
+   // ADIE = 1; // Enable ADC interrupt
+    TMR0IE = 1; // Enable Timer0 interrupt
+   INTCONbits.GIE = 1;
+
+     // Start
+    ADON = 1; // Enable ADC
+    GODONE = 1; // Start ADC conversion
+   
+   
+    
+    __delay_ms(1000);
+
+    while (1) {
+    if (running) {
+        float temp = DS18B20_ReadTemp();
+        if (temp > 0) currentTemp = temp;
+        else UART_SendString("Sensor Error\r\n");
+
+        float error = setpoints[currentSetpointIndex] - currentTemp;
+        int pwmDuty = Kp * fabs(error);
+        if (pwmDuty > 255) pwmDuty = 255;
+
+        if (error > 0) {
+            CCPR1L = pwmDuty * 20;
+            ECCPR1L = 0;
+        } else {
+            ECCPR1L = pwmDuty * 20;
+            CCPR1L = 0;
+        }
+
+        lcdcmd(0x01);
+        lcdcmd(0x80);
+        lcd_print_str("SP:");
+        lcd_print_uint8((unsigned char)setpoints[currentSetpointIndex]);
+        lcddata(0xDF); lcddata('C');
+        lcd_print_str(" T:");
+        lcd_print_uint8((unsigned char)currentTemp);
+        lcddata(0xDF); lcddata('C');
+
+        lcdcmd(0xC0);
+        const char *phase = (currentSetpointIndex < 26) ? "Pre" :
+                            (currentSetpointIndex < 38) ? "Soak" :
+                            (currentSetpointIndex < 46) ? "Reflow" : "Cool";
+        lcd_print_str(phase);
+        lcddata(' ');
+        lcddata((error > 0) ? 'H' : 'F');
+        lcd_print_str(":ON Kp:");
+        lcd_print_uint8(Kp);
+
+        Send_Serial_Data();
+    } else {
+        // Turn off PWM if stopped
+        CCPR1L = 0;
+        ECCPR1L = 0;
+
+        lcdcmd(0x01);
+        lcdcmd(0x80);
+        lcd_print_str("System Paused...");
+        lcdcmd(0xC0);
+        lcd_print_str("**Solder Oven**");
+    }
+
+    __delay_ms(100);
+}
+
+}

@@ -1,0 +1,26 @@
+#include <xc.h>
+
+// Function prototype for delay
+void delay(int preload);
+
+void main(void)
+{
+    TRISD = 0;       // Configure PORTD as output
+    T0CON = 0B00000011;  // Configure Timer0 with prescaler
+
+    while(1)
+    {
+        RD0 = ~RD0;  // Toggle RD0
+        delay(46786); // Call delay function
+    }
+}
+
+// Function to generate delay using Timer0
+void delay(int preload)
+{
+    TMR0 = preload;  // Load Timer0 with preload value
+    TMR0ON = 1;      // Start Timer0
+    while(!TMR0IF);  // Wait until Timer0 overflow flag is set
+    TMR0ON = 0;      // Stop Timer0
+    TMR0IF = 0;      // Clear Timer0 overflow flag
+}

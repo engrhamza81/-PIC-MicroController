@@ -1,0 +1,153 @@
+#include <xc.h>
+#define _XTAL_FREQ 200000000
+
+// ========== LCD CONFIGURATION ==========
+#define ldata PORTB   // LCD data pins (shared with keypad rows)
+#define rs LATE2      // Register Select (RS)
+#define rw LATE1      // Read/Write (RW) - Not used (set to 0)
+#define en LATE0      // Enable (EN)
+
+// ========== KEYPAD CONFIGURATION ==========
+#define X_1    RB0    // Keypad Row 1
+#define X_2    RB1    // Keypad Row 2
+#define X_3    RB2    // Keypad Row 3
+#define X_4    RB3    // Keypad Row 4
+#define Y_1    RB4    // Keypad Column 1 (IOC)
+#define Y_2    RB5    // Keypad Column 2 (IOC)
+#define Y_3    RB6    // Keypad Column 3 (IOC)
+#define Y_4    RB7    // Keypad Column 4 (IOC)
+
+volatile char key_press_flag = 0;  // Flag set when key is pressed
+volatile char last_key = 'n';      // Stores last pressed key
+
+// ========== FUNCTION PROTOTYPES ==========
+void delay(int ms);
+void lcdcmd(unsigned char value);
+void lcddata(unsigned char value);
+void InitLCD(void);
+void InitKeypad(void);
+char keypad_scanner(void);
+void display_key(char key);
+
+// ========== INTERRUPT SERVICE ROUTINE ==========
+void __interrupt() ISR(void) {
+    if (IOCBF4 || IOCBF5 || IOCBF6 || IOCBF7) { // Check column interrupts
+        key_press_flag = 1;      // Set flag for key press
+        IOCBF = 0x00;           // Clear IOC flags
+        IOCIE = 0;              // Disable IOC during processing
+    }
+}
+
+// ========== MAIN FUNCTION ==========
+void main(void) {
+    TRISB = 0xF0;       // RB0-3 as outputs (rows), RB4-7 as inputs (columns)
+    TRISE = 0x00;       // PORTE as output (LCD control)
+    ADCON1 = 0x0F;      // Disable analog inputs
+    
+    InitLCD();          // Initialize LCD
+    InitKeypad();       // Initialize Keypad with IOC
+
+    lcdcmd(0x80);      // Move cursor to line 1
+    lcddata('P'); lcddata('r'); lcddata('e'); lcddata('s'); lcddata('s'); 
+    lcddata(' '); lcddata('a'); lcddata(' '); lcddata('k'); lcddata('e'); 
+    lcddata('y'); lcddata(':'); lcddata(' ');
+
+    while (1) {
+        if (key_press_flag) {
+            last_key = keypad_scanner(); // Get pressed key
+            display_key(last_key);       // Display on LCD
+            
+            // Wait until all keys are released
+            while ((PORTB & 0xF0) != 0xF0);
+            
+            IOCIE = 1;                  // Re-enable IOC
+            key_press_flag = 0;         // Reset flag
+        }
+        SLEEP(); // Sleep to save power (wakes on interrupt)
+    }
+}
+
+// ========== LCD FUNCTIONS ==========
+void InitLCD(void) {
+    en = 0;
+    rw = 0; // Write mode
+    
+    delay(50);
+    lcdcmd(0x38); // 8-bit, 2 lines, 5x8 font
+    delay(5);
+    lcdcmd(0x0C); // Display ON, cursor OFF
+    delay(5);
+    lcdcmd(0x01); // Clear display
+    delay(5);
+    lcdcmd(0x06); // Auto-increment cursor
+    delay(5);
+}
+
+void lcdcmd(unsigned char value) {
+    ldata = value;
+    rs = 0; // Command mode
+    en = 1;
+    delay(2);
+    en = 0;
+    delay(2);
+}
+
+void lcddata(unsigned char value) {
+    ldata = value;
+    rs = 1; // Data mode
+    en = 1;
+    delay(2);
+    en = 0;
+    delay(2);
+}
+
+// ========== KEYPAD FUNCTIONS ==========
+void InitKeypad(void) {
+    Keypad_PORT = 0x00;          // Rows (RB0-RB3) low initially
+    ANSELB = 0x00;               // Disable analog on PORTB
+    WPUB = 0xF0;                 // Weak pull-ups on columns (RB4-7)
+    OPTION_REGbits.nWPUEN = 0;   // Enable weak pull-ups
+    IOCBN = 0xF0;                // IOC on falling edge for RB4-7
+    IOCBF = 0x00;                // Clear IOC flags
+    IOCIE = 1;                   // Enable IOC interrupt
+    GIE = 1;                     // Enable global interrupts
+}
+
+char keypad_scanner(void) {           
+    X_1 = 0; X_2 = 1; X_3 = 1; X_4 = 1;    
+    if (Y_1 == 0) { __delay_ms(100); while (Y_1 == 0); return '1'; }
+    if (Y_2 == 0) { __delay_ms(100); while (Y_2 == 0); return '2'; }
+    if (Y_3 == 0) { __delay_ms(100); while (Y_3 == 0); return '3'; }
+    if (Y_4 == 0) { __delay_ms(100); while (Y_4 == 0); return 'A'; }
+
+    X_1 = 1; X_2 = 0; X_3 = 1; X_4 = 1;    
+    if (Y_1 == 0) { __delay_ms(100); while (Y_1 == 0); return '4'; }
+    if (Y_2 == 0) { __delay_ms(100); while (Y_2 == 0); return '5'; }
+    if (Y_3 == 0) { __delay_ms(100); while (Y_3 == 0); return '6'; }
+    if (Y_4 == 0) { __delay_ms(100); while (Y_4 == 0); return 'B'; }
+
+    X_1 = 1; X_2 = 1; X_3 = 0; X_4 = 1;    
+    if (Y_1 == 0) { __delay_ms(100); while (Y_1 == 0); return '7'; }
+    if (Y_2 == 0) { __delay_ms(100); while (Y_2 == 0); return '8'; }
+    if (Y_3 == 0) { __delay_ms(100); while (Y_3 == 0); return '9'; }
+    if (Y_4 == 0) { __delay_ms(100); while (Y_4 == 0); return 'C'; }
+
+    X_1 = 1; X_2 = 1; X_3 = 1; X_4 = 0;    
+    if (Y_1 == 0) { __delay_ms(100); while (Y_1 == 0); return '*'; }
+    if (Y_2 == 0) { __delay_ms(100); while (Y_2 == 0); return '0'; }
+    if (Y_3 == 0) { __delay_ms(100); while (Y_3 == 0); return '#'; }
+    if (Y_4 == 0) { __delay_ms(100); while (Y_4 == 0); return 'D'; }
+
+    return 'n'; // No key pressed
+}
+
+void display_key(char key) {
+    lcdcmd(0x8D); // Move cursor to position after "Press a key: "
+    lcddata(key);  // Display the pressed key
+}
+
+// ========== DELAY FUNCTION ==========
+void delay(int ms) {
+    for(int i = 0; i < ms; i++)
+        __delay_ms(1);
+}

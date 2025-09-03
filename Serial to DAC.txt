@@ -1,0 +1,73 @@
+LAST QUIZ SOLUTION (ANNOUNCED QUIZ 6) SERIAL TO DAC TRIANGULAR WAVE GENERATOR
+
+#include <xc.h>
+
+void delay(int ms);
+
+unsigned char U = 0;
+unsigned char D = 0;
+float X = 0;
+unsigned char Y = 30;
+unsigned char C = 1;
+
+void __interrupt () ISR(void)
+{
+    if(C == 1)
+    {
+        U = U1RXB;
+        U = U-48;
+        C++;
+    }
+    else if(C == 2)
+    {
+        D = U1RXB;
+        C++;
+    }
+    else if(C == 3)
+    {
+        D = U1RXB;
+        D = D-48;
+        C = 1;
+        X = D;
+        X = X/10;
+        X = U+X;
+        X = 31*(X/3.2);
+        Y = X;
+    }
+}
+
+void main(void)
+{
+    U1RXPPS = 0B00010111;
+    TRISC7 = 1;
+    ANSELC7 = 0;
+    
+    TRISA2 = 0;
+    DAC1CON0 = 0B10100000;
+    
+    U1CON0 = 0B10010000;    //High Baudrate, RXEN
+    U1CON1 = 0B10000000;    //Serial port ON
+    U1BRG = 1666;
+    
+    GIE = 1;
+    U1RXIE = 1;
+
+    while(1)
+    {
+        for(int i = 0; i < Y; i++)
+        {
+            DAC1CON1 = i;
+            delay(1);
+        }
+        for(int j = Y; j >= 0; j--)
+        {
+            DAC1CON1 = j;
+            delay(1);
+        }
+    }
+}
+
+void delay(int ms)
+{
+    for(int k=0; k<100; k++);
+}

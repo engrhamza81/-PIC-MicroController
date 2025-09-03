@@ -1,0 +1,225 @@
+// PIC18F458 Configuration Bit Settings
+
+// 'C' source line config statements
+
+// CONFIG1H
+#pragma config OSC = HS         // Oscillator Selection bits (HS oscillator)
+#pragma config OSCS = OFF       // Oscillator System Clock Switch Enable bit (Oscillator system clock switch option is disabled (main oscillator is source))
+
+// CONFIG2L
+#pragma config PWRT = OFF       // Power-up Timer Enable bit (PWRT disabled)
+#pragma config BOR = OFF        // Brown-out Reset Enable bit (Brown-out Reset disabled)
+#pragma config BORV = 25        // Brown-out Reset Voltage bits (VBOR set to 2.5V)
+
+// CONFIG2H
+#pragma config WDT = OFF        // Watchdog Timer Enable bit (WDT disabled (control is placed on the SWDTEN bit))
+#pragma config WDTPS = 128      // Watchdog Timer Postscale Select bits (1:128)
+
+// CONFIG4L
+#pragma config STVR = OFF       // Stack Full/Underflow Reset Enable bit (Stack Full/Underflow will not cause Reset)
+#pragma config LVP = OFF        // Low-Voltage ICSP Enable bit (Low-Voltage ICSP disabled)
+
+// CONFIG5L
+#pragma config CP0 = OFF        // Code Protection bit (Block 0 (000200-001FFFh) not code protected)
+#pragma config CP1 = OFF        // Code Protection bit (Block 1 (002000-003FFFh) not code protected)
+#pragma config CP2 = OFF        // Code Protection bit (Block 2 (004000-005FFFh) not code protected)
+#pragma config CP3 = OFF        // Code Protection bit (Block 3 (006000-007FFFh) not code protected)
+
+// CONFIG5H
+#pragma config CPB = OFF        // Boot Block Code Protection bit (Boot Block (000000-0001FFh) not code protected)
+#pragma config CPD = OFF        // Data EEPROM Code Protection bit (Data EEPROM not code protected)
+
+// CONFIG6L
+#pragma config WRT0 = OFF       // Write Protection bit (Block 0 (000200-001FFFh) not write protected)
+#pragma config WRT1 = OFF       // Write Protection bit (Block 1 (002000-003FFFh) not write protected)
+#pragma config WRT2 = OFF       // Write Protection bit (Block 2 (004000-005FFFh) not write protected)
+#pragma config WRT3 = OFF       // Write Protection bit (Block 3 (006000-007FFFh) not write protected)
+
+// CONFIG6H
+#pragma config WRTC = OFF       // Configuration Register Write Protection bit (Configuration registers (300000-3000FFh) not write protected)
+#pragma config WRTB = OFF       // Boot Block Write Protection bit (Boot Block (000000-0001FFh) not write protected)
+#pragma config WRTD = OFF       // Data EEPROM Write Protection bit (Data EEPROM not write protected)
+
+// CONFIG7L
+#pragma config EBTR0 = OFF      // Table Read Protection bit (Block 0 (000200-001FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR1 = OFF      // Table Read Protection bit (Block 1 (002000-003FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR2 = OFF      // Table Read Protection bit (Block 2 (004000-005FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR3 = OFF      // Table Read Protection bit (Block 3 (006000-007FFFh) not protected from Table Reads executed in other blocks)
+
+// CONFIG7H
+#pragma config EBTRB = OFF      // Boot Block Table Read Protection bit (Boot Block (000000-0001FFh) not protected from Table Reads executed in other blocks)
+#include <xc.h>
+#include <stdio.h>
+
+#define ldata PORTB
+#define rs    LATE2
+#define rw    LATE1
+#define en    LATE0
+
+unsigned char temp;
+
+void delay(int ms);
+void lcdcmd(unsigned char value);
+void lcddata(unsigned char value);
+void lcd_init(void);
+void lcd_print_uint8(unsigned char v);
+void lcd_print_str(const char *str);
+
+// — Temperature calculation function —//
+float temperature(int x) {
+    float t = (float)x / 255.0f * 300.0f;
+    if (t <= 60.0f) return 25.0f + 2.0f * t;
+    else if (t <= 150.0f) return 145.0f + 0.5f * (t - 60.0f);
+    else if (t <= 180.0f) return 190.0f + 1.0f * (t - 150.0f);
+    else return 220.0f - 1.5f * (t - 180.0f);
+}
+
+// — Interrupt Service Routine —//
+void __interrupt() ISR(void) {
+    // 1. Calculate time and temperature
+    float t = (float)ADRESH / 255.0f * 300.0f;
+    float actual_temp = temperature(ADRESH);
+    temp = (unsigned char)actual_temp;
+
+    // 2. Determine phase and heater/fan status
+    const char *phase;
+    if (t <= 60.0f) phase = "Pre-heat";
+    else if (t <= 150.0f) phase = "Soak";
+    else if (t <= 180.0f) phase = "Reflow";
+    else phase = "Cooling";
+
+    // 3. Control fan/heater based on temperature
+    if (actual_temp > 127.0f) {
+        ECCPR1L = ADRESH; // Fan ON
+        CCPR1L  = 0;
+    } else {
+        CCPR1L  = ADRESH; // Heater ON
+        ECCPR1L = 0;
+    }
+
+    ADIF = 1;
+    GODONE = 1;
+
+    delay(300);
+
+    // 4. Update LCD
+    lcdcmd(0x01); // Clear display
+
+    // Line 1: Temp + Heater/Fan status (e.g., "Temp:150°C H ON")
+    lcdcmd(0x80);
+    lcddata('T'); lcddata('e'); lcddata('m'); lcddata('p'); lcddata(':'); 
+    lcd_print_uint8(temp);
+    lcddata(0xDF); // Degree symbol
+    lcddata('C');
+    lcddata(' ');
+    if (actual_temp > 127.0f) {
+        lcddata('F'); lcddata(' '); lcddata('O'); lcddata('N'); // "F ON"
+    } else {
+        lcddata('H'); lcddata(' '); lcddata('O'); lcddata('N'); // "H ON"
+    }
+
+    // Line 2: Phase (e.g., "Stage:Pre-heat")
+    lcdcmd(0xC0);
+    lcddata('S'); lcddata('t'); lcddata('a'); lcddata('g'); lcddata('e'); lcddata(':'); 
+    lcd_print_str(phase);
+}
+
+// — String print function —//
+void lcd_print_str(const char *str) {
+    while(*str) {
+        lcddata(*str++);
+    }
+}
+
+// — Rest of the code remains unchanged —//
+// (main(), delay(), lcd_init(), etc.) —//
+
+void main(void) {
+    TRISB = 0x00;  
+    TRISE = 0x00;
+    TRISD4 = 0;
+    TRISC2 = 0;
+    TRISA0 = 1;
+    AN0    = 1;
+    ADCON0 = 0b00000001;
+    ADCON1 = 0b00000000;
+
+    CCP1CON  = 0b00001100;
+    ECCP1CON = 0b00001100;
+    T2CON    = 0b00000001;
+    PR2      = 249;
+    TMR2ON   = 1;
+
+    lcd_init();
+
+    ADIF   = 0;
+    ADIE   = 1;
+    PEIE   = 1;
+    GIE    = 1;
+    ADON   = 1;
+    GODONE = 1;
+
+    while (1) {
+        ; 
+    }
+}
+
+//— simple delay —//
+void delay(int ms) {
+    for (int i = 0; i < ms; i++)
+        for (int j = 0; j < 100; j++);
+}
+
+//— initialize LCD in 8-bit mode —//
+void lcd_init(void) {
+    rw = 0;
+    delay(50);
+    lcdcmd(0x38);
+    delay(5);
+    lcdcmd(0x0C);
+    delay(5);
+    lcdcmd(0x06);
+    delay(5);
+    lcdcmd(0x01);
+    delay(5);
+    lcdcmd(0x80);
+    delay(5);
+}
+
+//— send a command byte —//
+void lcdcmd(unsigned char value) {
+    ldata = value;
+    rs = 0;
+    en = 1;
+    delay(2);
+    en = 0;
+    delay(2);
+}
+
+//— send a data byte —//
+void lcddata(unsigned char value) {
+    ldata = value;
+    rs = 1;
+    en = 1;
+    delay(2);
+    en = 0;
+    delay(2);
+}
+
+//— print a 0–255 value as decimal —//
+void lcd_print_uint8(unsigned char v) {
+    unsigned char hundreds = v / 100;
+    unsigned char tens     = (v % 100) / 10;
+    unsigned char ones     = v % 10;
+
+    if (hundreds) {
+        lcddata('0' + hundreds);
+        lcddata('0' + tens);
+        lcddata('0' + ones);
+    } else if (tens) {
+        lcddata('0' + tens);
+        lcddata('0' + ones);
+    } else {
+        lcddata('0' + ones);
+    }
+}

@@ -1,0 +1,40 @@
+#include <xc.h> // Include the XC header file for PIC microcontroller support
+
+// Interrupt Service Routine (ISR) for handling ADC interrupts
+void __interrupt() ISR(void) {
+    PWM5DCH = ADRESH; // Transfer the high byte of the ADC result to PWM5 duty cycle register
+    ADIF = 0; // Clear the ADC interrupt flag
+}
+
+void main(void) {
+    TRISC = 0; // Set PORTC as output (for PWM output)
+    PORTC = 0; // Initialize PORTC to 0
+    TRISD = 0; // Set PORTD as output (if needed for other purposes)
+    PORTD = 0; // Initialize PORTD to 0
+    TRISB0 = 1; // Set RB0 as input (for ADC input)
+    ANSELB0 = 1; // Set RB0 as analog input (enable analog function on RB0)
+
+    // Configure ADC
+    ADCON0 = 0B11000000; // Enable ADC and select channel 0 (AN0)
+    ADCLK = 0B00000010; // Set ADC clock source (Fosc/4)
+    ADREF = 0B00000000; // Set reference voltage (Vref+ = Vdd, Vref- = Vss)
+    ADPCH = 0B00000000; // Select the positive channel for ADC (AN0)
+
+    // Start the ADC conversion
+    ADCON0bits.GO = 1; // Start the ADC conversion
+    ADIE = 1; // Enable ADC interrupt
+
+    // Configure PWM
+    PWM5CON = 0B10000000; // Enable PWM5 and set mode
+    CCPTMRS1 = 0B01010101; // Configure the timer selection for PWM5
+    RA1PPS = 0B0000110; // Set RA1 as the output for PWM5
+
+    // Configure Timer2 for PWM
+    T2CLK = 0B00000001; // Select Timer2 clock source
+    T2PR = 22; // Set Timer2 period register (adjust for desired PWM frequency)
+    T2CON = 0B00000000; // Configure Timer2 control register (prescaler and timer off)
+    T2ON = 1; // Turn on Timer2
+
+    while(1); // Infinite loop to keep the program running
+    return; // Return statement (not necessary in an infinite loop)
+}

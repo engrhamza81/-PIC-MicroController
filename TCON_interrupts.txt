@@ -1,0 +1,55 @@
+#include <xc.h>
+
+// Interrupt Service Routine (ISR) for Timer0 overflow
+void __interrupt() ISR(void)
+{
+    RD0 = ~RD0;  // Toggle RD0 on each interrupt
+    TMR0 = 63661; // Reload Timer0 to maintain delay consistency
+    TMR0IF = 0;  // Clear Timer0 interrupt flag
+}
+
+void main(void)
+{
+    TRISD = 0;   // Configure PORTD as output
+    T0CON = 0B00000011;  // Configure Timer0 with prescaler
+
+    GIE = 1;     // Enable global interrupts
+    TMR0IE = 1;  // Enable Timer0 interrupt
+    PEIE = 1;    // Enable peripheral interrupts
+
+    RD0 = 0;     // Initialize RD0 to low
+    TMR0 = 63661; // Load Timer0 with initial value
+    TMR0ON = 1;  // Start Timer0
+
+    while(1)
+    {
+        // Main loop does nothing; all work is handled by the ISR
+    }
+}
+
+
+
+
+
+Explanation
+
+    Interrupt Service Routine (ISR)
+        The function ISR() is triggered whenever Timer0 overflows.
+        It toggles the RD0 pin, reinitializes Timer0 with 63661 to maintain timing, and clears the Timer0 interrupt flag (TMR0IF).
+
+    Main Function
+        TRISD=0; → Sets PORTD as output.
+        T0CON=0B00000011; → Configures Timer0 with a prescaler.
+        GIE=1; → Enables global interrupts.
+        TMR0IE=1; → Enables Timer0 interrupt.
+        PEIE=1; → Enables peripheral interrupts.
+        TMR0=63661; → Initializes Timer0 with a preload value to control timing.
+        TMR0ON=1; → Starts Timer0.
+        The while(1) loop keeps the program running, but all the work is handled inside the ISR.
+
+How it Works
+
+    Timer0 starts counting from 63661.
+    When it overflows (reaches 65535), an interrupt is triggered.
+    The ISR toggles RD0, resets TMR0 to 63661, and clears the interrupt flag.
+    This creates a periodic blinking effect on the RD0 pin.

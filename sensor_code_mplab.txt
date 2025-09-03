@@ -1,0 +1,153 @@
+#include <xc.h>
+#include <stdint.h>
+#include "config.h"
+
+#define _XTAL_FREQ 8000000
+
+// DS18B20 pin
+#define DQ_DIR  TRISBbits.TRISB0
+#define DQ_PIN  PORTBbits.RB0
+#define DQ_LAT  LATBbits.LATB0
+
+// UART Functions
+void UART_Init(void) {
+    SPBRG = 12;          // Baud rate 9600 for 8MHz (Fosc / (64*(n+1)))
+    TXSTAbits.BRGH = 0;  // Low speed
+    TXSTAbits.TXEN = 1;  // Enable transmission
+    RCSTAbits.SPEN = 1;  // Enable serial port
+}
+
+void UART_SendChar(char c) {
+    while (!TXSTAbits.TRMT);
+    TXREG = c;
+}
+
+void UART_SendString(const char* str) {
+    while (*str) UART_SendChar(*str++);
+}
+
+// OneWire Functions
+uint8_t OneWire_Reset(void) {
+    DQ_DIR = 0; DQ_LAT = 0; __delay_us(480);  // Pull low
+    DQ_DIR = 1; __delay_us(70);              // Release and wait
+    uint8_t presence = !DQ_PIN;              // 0 = error, 1 = OK
+    __delay_us(410);
+    return presence;
+}
+
+//void OneWire_WriteBit(uint8_t bit) {
+//    DQ_DIR = 0; DQ_LAT = 0;
+//    __delay_us(bit ? 6 : 60);   // Short for 1, long for 0
+//    DQ_DIR = 1; __delay_us(bit ? 64 : 10);
+//}
+
+void OneWire_WriteBit(uint8_t bit) {
+    DQ_DIR = 0; DQ_LAT = 0;
+    
+    // Perform the delay for bit 0 and bit 1
+    if (bit) {
+        __delay_us(6);    // Short delay for bit 1
+    } else {
+        __delay_us(60);   // Long delay for bit 0
+    }
+
+    DQ_DIR = 1;   // Release the line
+    if (bit) {
+        __delay_us(64);   // Extra delay for bit 1
+    } else {
+        __delay_us(10);   // Extra delay for bit 0
+    }
+}
+
+
+uint8_t OneWire_ReadBit(void) {
+    uint8_t bit;
+    DQ_DIR = 0; DQ_LAT = 0; __delay_us(2);
+    DQ_DIR = 1; __delay_us(10);
+    bit = DQ_PIN;
+    __delay_us(50);
+    return bit;
+}
+
+void OneWire_WriteByte(uint8_t data) {
+    for (uint8_t i = 0; i < 8; i++)
+        OneWire_WriteBit(data & (1 << i));
+}
+
+uint8_t OneWire_ReadByte(void) {
+    uint8_t data = 0;
+    for (uint8_t i = 0; i < 8; i++)
+        if (OneWire_ReadBit()) data |= (1 << i);
+    return data;
+}
+
+// DS18B20 Temperature Read
+float DS18B20_ReadTemp(void) {
+    if (!OneWire_Reset()) return -1000.0; // Error
+
+    OneWire_WriteByte(0xCC); // Skip ROM
+    OneWire_WriteByte(0x44); // Convert T
+    __delay_ms(750);         // Wait for conversion
+
+    if (!OneWire_Reset()) return -1000.0;
+
+    OneWire_WriteByte(0xCC); // Skip ROM
+    OneWire_WriteByte(0xBE); // Read Scratchpad
+
+    uint8_t tempLSB = OneWire_ReadByte();
+    uint8_t tempMSB = OneWire_ReadByte();
+
+    int16_t rawTemp = (tempMSB << 8) | tempLSB;
+    return rawTemp * 0.0625; // Convert to °C
+}
+
+void SendTemperature(float temp) {
+    int t = (int)(temp * 100);  // e.g., 25.75°C ? 2575
+    int t_int = t / 100;
+    int t_frac = t % 100;
+
+    UART_SendString("Temp: ");
+    UART_SendChar('0' + (t_int / 10));
+    UART_SendChar('0' + (t_int % 10));
+    UART_SendChar('.');
+    UART_SendChar('0' + (t_frac / 10));
+    UART_SendChar('0' + (t_frac % 10));
+    UART_SendString("C\r\n");
+}
+
+void PWM_Init() {
+    PR2 = 0xFF;         // PWM period ~7.8kHz
+    CCP1CON = 0x0C;     // PWM mode (Heater: RC2)
+    CCP2CON = 0x0C;     // PWM mode (Fan: RC1)
+    T2CON = 0x04;       // Timer2 on
+    TRISC1 = 0;             // RC1 as output (CCP2)
+    TRISC2 = 0; // PWM pins as outputs
+}
+
+void main(void) {
+    OSCCON = 0x72;     // Internal 8MHz
+    UART_Init();       // Initialize UART
+    DQ_DIR = 1;        // Set DS18B20 pin as input
+    TRISC6 = 0;        // UART TX pin as output
+
+    __delay_ms(1000);  // Startup delay
+
+    while (1) {
+        float temp = DS18B20_ReadTemp();
+        if (temp > -100) {
+            SendTemperature(temp);  // <-- use the new function
+        } else {
+            UART_SendString("Sensor Error\r\n");
+        }
+
+        __delay_ms(1000);
+    }
+    
+    OSCCON = 0b01110000;
+    PWM_Init();
+    
+    while(1) {
+        CCPR1L = 128; // 50% heater duty
+        CCPR2L = 64;  // 25% fan duty
+    }
+}

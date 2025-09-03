@@ -1,0 +1,40 @@
+#include <xc.h> // Include the XC header file for PIC microcontroller support
+
+// Interrupt Service Routine (ISR) for handling external interrupts
+void __interrupt() ISR(void) {
+    CWG1CON0bits.MODE0 = ~CWG1CON0bits.MODE0; // Toggle the MODE0 bit of the CWG1 control register
+    INT0IF = 0; // Clear the interrupt flag for INT0
+}
+
+void main(void) {
+    TRISB = 0x01; // Set RB0 as input and RB1 as output (RB0 is the INT0 pin)
+    ANSELB0 = 0; // Disable analog input on RB0 (set as digital I/O)
+    WPUB0 = 1; // Enable weak pull-up on RB0
+    INT0PPS = 0B00001000; // Set the INT0 peripheral pin select to a specific source
+
+    CWG1CON0 = 0B10000011; // Configure the CWG1 control register (enable and set mode)
+    CWG1CON1 = 0B00000000; // Clear the CWG1 control register 1 (default settings)
+    CWG1CLK = 0; // Set the clock source for the CWG1 to the default (internal clock)
+    CWG1ISM = 0B00000001; // Set the CWG1 interrupt mode (enable interrupt on rising edge)
+
+    RB1PPS = 0B00000101; // Set RB1 as the output for a specific peripheral function
+    RB2PPS = 0B00000110; // Set RB2 as the output for another specific peripheral function
+    RB2PPS = 0B00000111; // Set RB2 as the output for yet another specific peripheral function
+    RB2PPS = 0B00001000; // Set RB2 as the output for a different specific peripheral function
+
+    CCP1CON = 0B10011100; // Configure the CCP1 control register for PWM mode
+    CCPTMRS0 = 0B01010101; // Set the timer selection for the CCP1 module
+
+    CCPR1H = 100; // Set the high byte of the CCPR1 register for PWM duty cycle
+    TMR2IF = 1; // Set the Timer2 interrupt flag (for testing purposes, usually should be cleared)
+    T2CLK = 0B00000001; // Select the clock source for Timer2
+    T2PR = 255; // Set the Timer2 period register to 255 (maximum value)
+
+    T2CON = 0B00000000; // Configure Timer2 control register (prescaler and timer off)
+    GIE = 1; // Enable global interrupts
+    INT0IE = 1; // Enable INT0 external interrupt
+    T2ON = 1; // Turn on Timer2
+
+    while(1); // Infinite loop to keep the program running
+    return; // Return statement (not necessary in an infinite loop)
+}

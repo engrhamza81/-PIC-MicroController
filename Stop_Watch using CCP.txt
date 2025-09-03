@@ -1,0 +1,40 @@
+STOPWTACH USING CAPTURE MODE OF CCP: SOLUTION SECOND LAST QUIZ (ACCOUNCED QUIZ-5)
+
+unsigned char count = 0;
+
+void __interrupt () ISR(void)
+{
+    if(count==0)
+    {
+        TMR1 = 0;           //if button is pressed first time, clear running timer to 0
+        count = 1;          //set count to 1 to detect falling edge for the next time
+    }
+    else if(count==1)       //if button is pressed for second time, we have to stop and display captured value
+    {
+        CCPR1 = CCPR1/4;    //Captured value is counts. One count is 1/4 ms. Number of counts/4 = ms passed
+        LATC = CCPR1H;      //Display upper half of count on PORTC, no conversion to BCD
+        LATD = CCPR1L;      //Display lower half of count on PORTD, no conversion to BCD
+    }
+    CCP1IF = 0;
+}
+
+void main(void)
+{
+    TRISC = 0;
+    TRISD = 0;
+    TRISB0 = 1;
+    ANSELB0 = 0;
+    CCP1PPS = 0B00001000;   //RB0 as CCP capture input
+    CCP1CON = 0B10000100;   //capture mode every falling edge
+    CCP1TMRS0 = 0B01010101; //Timer 1 selected for CCP1 Capture
+    CCPCAP = 0x00;          //Capture signal on external pin input
+    
+    T1CON = 0B00110010;     //Prescaler of 8, 16-bit read-write mode
+    T1CLK = 0B00000100;     //Low freq clock of 32 kHz: Time per count = 1/4 ms
+    
+    GIE = 1;
+    CCP1IE = 1;             //Falling edge on input button will generate capture interrupt
+    TMR1ON = 1;             //Timer on and wait for falling edge on input button
+    
+    while(1);
+}

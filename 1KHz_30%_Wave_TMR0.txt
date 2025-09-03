@@ -1,0 +1,39 @@
+#include <xc.h>
+
+// Interrupt Service Routine (ISR) for Timer0 overflow
+void __interrupt() ISR(void)
+{
+    if(RD0==1){
+   
+    RD0 =0;  // Toggle RD0 on each interrupt
+    TMR0 =218.75; // Reload Timer0 to maintain delay consistency
+    TMR0IF = 0;  // Clear Timer0 interrupt flag
+    }
+    else if(RD0==0){
+     TMR0=0;   
+    RD0 =1;  // Toggle RD0 on each interrupt
+    TMR0 =93.75; // Reload Timer0 to maintain delay consistency
+    TMR0IF = 0;  // Clear Timer0 interrupt flag
+    }
+}
+
+void main(void)
+{
+    TRISD = 0;   // Configure PORTD as output
+    T0CON = 0B01110011;  // Configure Timer0 with prescaler
+
+    GIE = 1;     // Enable global interrupts
+    TMR0IE = 1;  // Enable Timer0 interrupt
+    PEIE = 1;    // Enable peripheral interrupts
+
+    RD0 = 0;     // Initialize RD0 to low
+    TMR0 =93; // Load Timer0 with initial value
+    TMR0ON = 1;  // Start Timer0
+
+    while(1)
+    {
+        // Main loop does nothing; all work is handled by the ISR
+    }
+}
+
+

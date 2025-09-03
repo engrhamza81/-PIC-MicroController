@@ -1,0 +1,77 @@
+#include <xc.h> // Include header file for PIC microcontroller functions
+
+#define _XTAL_FREQ 4000000  // Define system clock frequency (4MHz) for delay calculations
+
+// Define step sequences for the stepper motors (4-step full drive sequence)
+const unsigned char motor1Steps[4] = {0x01, 0x02, 0x04, 0x08}; // Motor 1 sequence (Lower nibble: RD0-RD3)
+const unsigned char motor2Steps[4] = {0x10, 0x20, 0x40, 0x80}; // Motor 2 sequence (Upper nibble: RD4-RD7)
+
+// Function to control Motor 1 by setting the lower nibble (RD0-RD3)
+void driveMotor1(unsigned char step) {
+    LATD = (LATD & 0xF0) | (step & 0x0F); // Preserve upper nibble, update lower nibble
+}
+
+// Function to control Motor 2 by setting the upper nibble (RD4-RD7)
+void driveMotor2(unsigned char step) {
+    LATD = (LATD & 0x0F) | (step & 0xF0); // Preserve lower nibble, update upper nibble
+}
+
+void main(void) {
+    TRISD = 0;  // Set PORTD as output (All bits configured as output pins)
+    LATD = 0x00; // Initialize PORTD to 0 (All pins LOW initially)
+
+    // Define motor speed (lower value means higher speed)
+    int motor1Speed = 5; // Motor 1 moves every 5ms
+    int motor2Speed = 3; // Motor 2 moves every 3ms
+
+    int motor1Counter = 0; // Counter for Motor 1 step timing
+    int motor2Counter = 0; // Counter for Motor 2 step timing
+    int step1 = 0, step2 = 0; // Step index for both motors
+
+    while (1) { // Infinite loop to continuously run motors
+        
+        // Step Motor 1 when its counter reaches its speed limit
+        if (motor1Counter >= motor1Speed) {
+            driveMotor1(motor1Steps[step1]); // Move Motor 1 to the next step
+            step1 = (step1 + 1) % 4; // Loop through step sequence (0-3)
+            motor1Counter = 0; // Reset counter for Motor 1
+        }
+
+        // Step Motor 2 when its counter reaches its speed limit
+        if (motor2Counter >= motor2Speed) {
+            driveMotor2(motor2Steps[step2]); // Move Motor 2 to the next step
+            step2 = (step2 + 1) % 4; // Loop through step sequence (0-3)
+            motor2Counter = 0; // Reset counter for Motor 2
+        }
+
+        __delay_ms(1); // Delay of 1ms to maintain consistent timing
+        motor1Counter++; // Increment Motor 1 counter
+        motor2Counter++; // Increment Motor 2 counter
+    }
+}
+Explanation of the Code:
+
+    Include Necessary Header:
+        #include <xc.h>: Includes the necessary functions for PIC microcontroller.
+
+    Define System Frequency:
+        _XTAL_FREQ 4000000: Defines the clock speed for accurate delay calculations.
+
+    Define Motor Step Sequences:
+        motor1Steps[] controls the lower 4 bits (RD0-RD3) for Motor 1.
+        motor2Steps[] controls the upper 4 bits (RD4-RD7) for Motor 2.
+
+    Motor Control Functions:
+        driveMotor1(): Updates only the lower nibble (4 bits) of LATD.
+        driveMotor2(): Updates only the upper nibble (4 bits) of LATD.
+
+    Main Function:
+        Sets PORTD as output.
+        Initializes motor speed (Motor 1 = 5ms delay, Motor 2 = 3ms delay).
+        Uses two counters to control when each motor should step.
+        The while(1) loop keeps the motors running indefinitely.
+
+    Loop Execution:
+        Motor 1 steps every motor1Speed cycles.
+        Motor 2 steps every motor2Speed cycles.
+        Uses __delay_ms(1) to synchronize timing.

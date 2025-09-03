@@ -1,0 +1,120 @@
+#include <xc.h>
+#include <stdio.h>
+
+#pragma config OSC = HS     // High-speed oscillator
+#pragma config WDT = OFF     // Watchdog timer off
+#pragma config LVP = OFF     // Low-voltage programming disabled
+
+// Setpoint array (48 values, 5-second intervals)
+const float setpoints[48] = {
+  25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100,
+  105, 110, 115, 120, 125, 130, 135, 140, 145, 150,  // Pre-Heat (0-120s)
+  150, 155, 160, 165, 170, 175, 180, 180, 180, 180, 180, 180,  // Soak (120-180s)
+  185, 190, 195, 200, 205, 210, 215, 220,  // Reflow (180-230s)
+  215, 210  // Cooling (230-240s)
+};
+
+volatile unsigned int currentSetpointIndex = 0;
+float currentTemp = 25.0;
+float Kp = 2.5;  // Proportional gain (tune experimentally)
+
+// Function prototypes
+void Initialize_ADC(void);
+void Initialize_PWM(void);
+void Initialize_UART(void);
+void Update_Setpoint(void);
+void Send_Serial_Data(void);
+
+// ================ MAIN ================
+void main(void) {
+  TRISB = 0x00;      // PORTB as output (PWM pins)
+  TRISA0 = 1;        // RA0 as input (temperature sensor)
+  
+  Initialize_ADC();  // Configure ADC
+  Initialize_PWM();  // Configure PWM
+  Initialize_UART(); // Configure UART
+  
+  // Timer1 for 5-second setpoint updates
+  T1CON = 0x30;      // Prescaler 1:8, internal clock
+  TMR1H = 0x0B;      // Initialize Timer1 for ~5 seconds
+  TMR1L = 0xDC;
+  TMR1IE = 1;        // Enable Timer1 interrupt
+  PEIE = 1;          // Peripheral interrupt enable
+  GIE = 1;           // Global interrupt enable
+  
+  while (1) {
+    // Read temperature from ADC (AN0)
+    ADCON0bits.GO = 1;          // Start ADC conversion
+    while (ADCON0bits.DONE);    // Wait for conversion
+    int adcValue = ADRESH << 8 | ADRESL;
+    currentTemp = (adcValue * 250.0) / 1023.0;  // Scale to 0-250°C
+    
+    // Calculate error and adjust PWM
+    float error = setpoints[currentSetpointIndex] - currentTemp;
+    float pwmDuty = (error > 0) ? (Kp * error) : (Kp * -error);
+    pwmDuty = (pwmDuty > 255) ? 255 : pwmDuty;  // Constrain duty
+    
+    // Set PWM for heater (CCP1) or fan (CCP2)
+    if (error > 0) {
+      CCPR1L = (int)pwmDuty;  // Heater ON
+      CCPR2L = 0;             // Fan OFF
+    } else {
+      CCPR2L = (int)pwmDuty;  // Fan ON
+      CCPR1L = 0;             // Heater OFF
+    }
+    
+    Send_Serial_Data();  // Send data to serial monitor
+    __delay_ms(100);     // Delay to stabilize readings
+  }
+}
+
+// ================ INTERRUPT SERVICE ROUTINE ================
+void __interrupt() ISR(void) {
+  if (TMR1IF) {
+    TMR1IF = 0;         // Clear Timer1 interrupt flag
+    TMR1H = 0x0B;       // Reload Timer1 for 5 seconds
+    TMR1L = 0xDC;
+    currentSetpointIndex++;
+    
+    // Stop at end of profile (48 intervals = 240 seconds)
+    if (currentSetpointIndex >= 48) {
+      TMR1IE = 0;       // Disable Timer1 interrupt
+      CCPR1L = 0;       // Turn off heater
+      CCPR2L = 0;       // Turn off fan
+    }
+  }
+}
+
+// ================ INITIALIZATION FUNCTIONS ================
+void Initialize_ADC(void) {
+  ADCON1 = 0x0E;        // AN0 analog, others digital
+  ADCON2 = 0x92;        // Right-justified, 8 TAD, Fosc/32
+  ADCON0 = 0x01;        // ADC enabled, channel AN0
+}
+
+void Initialize_PWM(void) {
+  PR2 = 0xFF;           // PWM period (~4.88 kHz)
+  CCP1CON = 0x0C;       // PWM mode for CCP1 (heater)
+  CCP2CON = 0x0C;       // PWM mode for CCP2 (fan)
+  T2CON = 0x04;         // Timer2 on, prescaler 1:1
+  CCPR1L = 0;           // Initial duty = 0%
+  CCPR2L = 0;
+}
+
+void Initialize_UART(void) {
+  SPBRG = 25;           // 9600 baud @ 16 MHz
+  TXSTA = 0x24;         // Transmit enabled, async mode
+  RCSTA = 0x90;         // Serial port enabled
+}
+
+// ================ SERIAL COMMUNICATION ================
+void Send_Serial_Data(void) {
+  char buffer[50];
+  sprintf(buffer, "Setpoint: %.1f, Current: %.1f\r\n", 
+          setpoints[currentSetpointIndex], currentTemp);
+  
+  for (int i = 0; buffer[i] != '\0'; i++) {
+    TXREG = buffer[i];  // Send each character
+    while (!TRMT);      // Wait for transmission
+  }
+}

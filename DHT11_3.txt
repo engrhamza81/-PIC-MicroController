@@ -1,0 +1,161 @@
+// PIC18F46K20 Configuration Bit Settings
+
+// CONFIG1H
+#pragma config FOSC = HS        // Oscillator Selection bits (HS oscillator)
+#pragma config FCMEN = OFF      // Fail-Safe Clock Monitor disabled
+#pragma config IESO = OFF       // Oscillator Switchover mode disabled
+
+// CONFIG2L
+#pragma config PWRTEN = ON      // Power-up Timer enabled
+#pragma config BOREN = OFF      // Brown-out Reset disabled
+#pragma config BORV = 18        // Brown-out Reset Voltage set to 1.8V nominal
+
+// CONFIG2H
+#pragma config WDTEN = OFF      // Watchdog Timer controlled by SWDTEN bit
+#pragma config WDTPS = 32768    // Watchdog Timer Postscale 1:32768
+
+// CONFIG3H
+#pragma config CCP2MX = PORTC   // CCP2 multiplexed with RC1
+#pragma config PBADEN = ON      // PORTB<4:0> as analog inputs on reset
+#pragma config LPT1OSC = OFF    // Timer1 in higher power operation
+#pragma config HFOFST = ON      // HFINTOSC starts CPU without delay
+#pragma config MCLRE = OFF      // MCLR disabled; RE3 as input
+
+// CONFIG4L
+#pragma config STVREN = OFF     // Stack Overflow/Underflow Reset disabled
+#pragma config LVP = OFF        // Single-Supply ICSP disabled
+#pragma config XINST = OFF      // Extended Instruction Set disabled
+
+// CONFIG5L
+#pragma config CP0 = OFF        // Code Protection Block 0 disabled
+#pragma config CP1 = OFF        // Code Protection Block 1 disabled
+#pragma config CP2 = OFF        // Code Protection Block 2 disabled
+#pragma config CP3 = OFF        // Code Protection Block 3 disabled
+
+// CONFIG5H
+#pragma config CPB = OFF        // Boot Block Code Protection disabled
+#pragma config CPD = OFF        // Data EEPROM Code Protection disabled
+
+// CONFIG6L
+#pragma config WRT0 = OFF       // Write Protection Block 0 disabled
+#pragma config WRT1 = OFF       // Write Protection Block 1 disabled
+#pragma config WRT2 = OFF       // Write Protection Block 2 disabled
+#pragma config WRT3 = OFF       // Write Protection Block 3 disabled
+
+// CONFIG6H
+#pragma config WRTC = OFF       // Config registers write protection disabled
+#pragma config WRTB = OFF       // Boot Block write protection disabled
+#pragma config WRTD = OFF       // EEPROM write protection disabled
+
+// CONFIG7L
+#pragma config EBTR0 = OFF      // Table Read Protection Block 0 disabled
+#pragma config EBTR1 = OFF      // Table Read Protection Block 1 disabled
+#pragma config EBTR2 = OFF      // Table Read Protection Block 2 disabled
+#pragma config EBTR3 = OFF      // Table Read Protection Block 3 disabled
+
+// CONFIG7H
+#pragma config EBTRB = OFF      // Boot Block Table Read Protection disabled
+
+#define _XTAL_FREQ 4000000
+
+#include <xc.h>
+#include <stdio.h>
+#include <stdint.h> // Include for uint8_t type
+
+
+#define DHT11_ERROR_TIMEOUT 253
+#define DHT11_ERROR_CHECKSUM 254
+
+// Function prototypes
+void UART_Write_Text(const char *text);
+void UART_Write(char data);
+uint8_t DHT11_Read(uint8_t *temperature, uint8_t *humidity);
+void startSignal(void);
+uint8_t readByte(void);
+void initUART(void); // Function to initialize UART
+
+uint8_t temp, hum, status;
+
+void main(void) {
+    OSCCON = 0x61;
+    // Initialize UART
+    initUART();
+
+    // Set DHT11 pin as input by default
+    TRISBbits.TRISB0 = 1; // Set RB0 as input
+    ANSELHbits.ANS12 = 0;
+
+    while (1) {
+        status = DHT11_Read(&temp, &hum);
+        if (status == 0) {
+            char buffer[32];
+            sprintf(buffer, "Temp: %dC, Humidity: %d%%\r\n", temp, hum);
+            UART_Write_Text(buffer); // Send temperature and humidity to UART
+        } else if (status == DHT11_ERROR_TIMEOUT) {
+            UART_Write_Text("Error: Timeout\r\n");
+        } else if (status == DHT11_ERROR_CHECKSUM) {
+            UART_Write_Text("Error: Checksum\r\n");
+        }
+        __delay_ms(2000); // Wait 2 seconds between reads
+    }
+}
+
+void initUART(void) {
+    // Configure the serial port settings
+    SPEN = 1;   // Enable the serial port
+    TXEN = 1;   // Enable the transmitter
+    SYNC = 0;   // Set to asynchronous mode
+    BRGH = 1;   // High baud rate select bit
+    SPBRG = 25; // Set the baud rate generator value
+}
+
+uint8_t DHT11_Read(uint8_t *temperature, uint8_t *humidity) {
+    uint8_t data[5] = {0};
+    startSignal();
+    __delay_us(100);
+    if (!PORTBbits.RB0) return DHT11_ERROR_TIMEOUT;
+    __delay_us(100);
+    if (PORTBbits.RB0) return DHT11_ERROR_TIMEOUT;
+    for (uint8_t i = 0; i < 5; i++)
+        data[i] = readByte();
+    if (data[4] != ((data[0] + data[1] + data[2] + data[3]) & 0xFF))
+        return DHT11_ERROR_CHECKSUM;
+    *humidity = data[0];
+    *temperature = data[2];
+    return 0; // Success
+}
+
+void startSignal(void) {
+    TRISBbits.TRISB0 = 0; // Set RB0 as output
+    PORTBbits.RB0 = 0; // Pull the pin low
+    __delay_ms(20); // Keep it low for 18 ms
+    PORTBbits.RB0 = 1; // Pull the pin high
+    __delay_us(50); // Wait for 40 us
+    TRISBbits.TRISB0 = 1; // Set RB0 as input
+}
+
+uint8_t readByte(void) {
+    uint8_t value = 0;
+    for (uint8_t i = 0; i < 8; i++) {
+        while (!PORTBbits.RB0); // Wait for the pin to go high
+        __delay_us(60); // Wait for half a bit time
+        if (PORTBbits.RB0)
+            value |= (1 << (7 - i)); // Set the bit
+        while (PORTBbits.RB0); // Wait for the pin to go low
+    }
+    return value;
+}
+
+// UART functions
+void UART_Write_Text(const char *text) {
+    while (*text) {
+        UART_Write(*text);
+        text++;
+    }
+}
+
+void UART_Write(char data) {
+    // Wait until the transmit buffer is empty
+    while (!TXIF); // TXIF is a flag that indicates the transmit buffer is empty
+    TXREG = data;  // Transmit the data
+}

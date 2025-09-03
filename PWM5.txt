@@ -1,0 +1,17 @@
+#include <xc.h>
+
+void main(void) {
+    PWM5CON = 0B00000000; // Clear PWM5 control register
+    CCPTMRS1 = 0B00000001; // Select Timer2 for PWM5
+    PWM5DC = 75; // Set duty cycle to 30% (75 out of 250)
+    T2PR = 249;  // Set Timer2 period for 1 kHz
+    T2CON = 0B00000000; // Timer2 control register (prescaler 1:1, Timer2 off)
+    T2CLK = 0B00000001; // Select Timer2 clock source
+    TRISA1 = 0; // Set RA1 as output for PWM5
+    PWM5CON = 0B10000000; // Enable PWM5
+    T2CONbits.TMR2ON = 1; // Turn on Timer2
+
+    while(1) {
+        // Main loop does nothing; all work is handled by the PWM hardware
+    }
+}

@@ -1,0 +1,44 @@
+#include <xc.h>
+
+// Function prototype for delay
+void DELAY(int MS);
+
+void main(void) {
+    TRISC = 0;  // Set PORTC as output
+    TRISD = 0;  // Set PORTD as output
+    LATC = 0x99; // Initialize PORTC with a starting pattern
+    LATD = 0x99; // Initialize PORTD with a starting pattern
+
+    // Rotate LATC right 50 times with delay
+    for(int i = 0; i < 50; i++) {
+        asm("RRNCF LATC");  // Rotate right without carry
+        DELAY(200);  // Wait for 200ms
+    }
+
+    // Rotate LATC left and LATD right in a pattern 25 times
+    for(int i = 0; i < 25; i++) {
+        asm("RLNCF LATC");  // Rotate left without carry
+        DELAY(200);
+        asm("RRNCF LATD");  // Rotate right without carry
+        DELAY(200);
+        asm("RRNCF LATD");  // Rotate right without carry again
+        DELAY(200);
+    }
+
+    // Rotate LATC left and LATD left in a pattern 25 times
+    for(int i = 0; i < 25; i++) {
+        asm("RLNCF LATC");  // Rotate left without carry
+        DELAY(200);
+        asm("RLNCF LATD");  // Rotate left without carry
+        DELAY(200);
+        asm("RLNCF LATD");  // Rotate left without carry again
+        DELAY(200);
+    }
+}
+
+// Delay function to create a time delay in milliseconds
+void DELAY(int MS) {
+    for(int i = 0; i < 100; i++) {
+        for(int j = 0; j < MS; j++);
+    }
+}

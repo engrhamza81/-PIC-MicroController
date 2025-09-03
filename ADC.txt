@@ -1,0 +1,33 @@
+#include <xc.h> // Include the XC header file for PIC microcontroller support
+
+// Interrupt Service Routine (ISR) for handling Analog-to-Digital Converter (ADC) interrupts
+void __interrupt() ISR(void) {
+    PORTD = ADRESH; // Transfer the high byte of the ADC result to PORTD
+    PORTC = ADRESL; // Transfer the low byte of the ADC result to PORTC
+    ADIF = 0; // Clear the ADC interrupt flag
+}
+
+void main(void) {
+    TRISC = 0; // Set PORTC as output (for displaying low byte of ADC result)
+    PORTC = 0; // Initialize PORTC to 0
+    TRISD = 0; // Set PORTD as output (for displaying high byte of ADC result)
+    PORTD = 0; // Initialize PORTD to 0
+    TRISB0 = 1; // Set RB0 as input (for ADC input)
+    ANSELB0 = 1; // Set RB0 as analog input (enable analog function on RB0)
+
+    // Configure ADC
+    ADCON0 = 0B11000000; // Enable ADC and select channel 0 (AN0)
+    ADCLK = 0B00000010; // Set ADC clock source (Fosc/4)
+    ADREF = 0B00000000; // Set reference voltage (Vref+ = Vdd, Vref- = Vss)
+    ADPCH = 0B00000000; // Select the positive channel for ADC (AN0)
+
+    // Start the ADC conversion
+    ADCON0bits.GO = 1; // Start the ADC conversion
+    ADIE = 1; // Enable ADC interrupt
+
+    while(1) {
+        // Infinite loop to keep the program running
+        // The ADC conversion will trigger the ISR when complete
+    }
+    return; // Return statement (not necessary in an infinite loop)
+}

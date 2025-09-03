@@ -1,0 +1,134 @@
+// Smart Temperature Monitoring System using PIC18F47K42
+// Oscillator: 64MHz (HFINTOSC)
+// Compiler: MPLAB XC8
+#include <xc.h>
+#include <stdio.h>
+#define _XTAL_FREQ 64000000UL
+
+// CONFIG settings (use MPLAB to set these properly)
+#pragma config FEXTOSC = OFF, RSTOSC = HFINT32
+#pragma config WDTE = OFF
+#pragma config MCLRE = INTMCLR
+
+// Pin Definitions
+#define FAN_PWM_LAT     LATCbits.LATC1 // CCP2
+#define HEATER_PWM_LAT  LATCbits.LATC2 // CCP1
+#define INC_DEC_PIN     PORTAbits.RA5  // Increase or Decrease signal
+
+// Global Variables
+volatile unsigned char selected_setpoint = 0; // 0: SP1, 1: SP2
+volatile unsigned char setpoint1 = 25;        // Default 25°C
+volatile unsigned char setpoint2 = 30;        // Default 30°C
+volatile unsigned int temperature = 0;
+
+// Function to read temperature from ADC
+unsigned int read_temperature(void) {
+    ADCON0bits.ADGO = 1; // Start ADC conversion
+    while(ADCON0bits.ADGO); // Wait for conversion to complete
+    unsigned int adc_val = ((ADRESH << 8) | ADRESL); // Combine high and low bytes
+    return (adc_val * 500UL) / 1023; // Convert to °C
+}
+
+// Function to update PWM based on temperature
+void update_pwm(unsigned int temp) {
+    if(temp < setpoint1) {
+        CCPR1L = 255; // Heater 100%
+        CCPR2L = 0;   // Fan OFF
+    }
+    else if(temp >= setpoint1 && temp < setpoint2) {
+        CCPR1L = 153; // Heater ~60%
+        CCPR2L = 102; // Fan ~40%
+    }
+    else {
+        CCPR1L = 0;   // Heater OFF
+        CCPR2L = 255; // Fan 100%
+    }
+}
+
+// Function to send UART data
+void send_uart_data(unsigned int temp) {
+    char buffer[50];
+    sprintf(buffer, "Temp: %u C, SP1: %u C, SP2: %u C\r\n", temp, setpoint1, setpoint2);
+    for(char* p = buffer; *p; p++) {
+        while(!TX1STAbits.TRMT); // Wait until the transmit register is empty
+        TX1REG = *p; // Transmit character
+    }
+}
+
+// Interrupt Service Routine
+void __interrupt ISR(void) {
+    if (INTCON0bits.INT0IF) { // Toggle Setpoint
+        selected_setpoint ^= 1; // Toggle between SP1 and SP2
+        INTCON0bits.INT0IF = 0; // Clear interrupt flag
+    }
+    if (PIR1bits.INT1IF) { // Increase/Decrease
+        if (INC_DEC_PIN == 1) {
+            if (selected_setpoint == 0) setpoint1++;
+            else setpoint2++;
+        } else {
+            if (selected_setpoint == 0 && setpoint1 > 0) setpoint1--;
+            else if (selected_setpoint == 1 && setpoint2 > 0) setpoint2--;
+        }
+        PIR1bits.INT1IF = 0; // Clear interrupt flag
+    }
+    if (PIR1bits.INT2IF) { // Display (user must implement LCD externally)
+        // lcd_display(setpoint1, setpoint2, temperature);
+        PIR1bits.INT2IF = 0; // Clear interrupt flag
+    }
+}
+
+// Main function
+void main(void) {
+    // Oscillator to 64MHz
+    OSCCON1 = 0x60; // HFINTOSC with HFFRQ
+    OSCFRQ = 0x08;  // 64 MHz
+
+    // Port directions
+    TRISC1 = 0; // CCP2 output (Fan)
+    TRISC2 = 0; // CCP1 output (Heater)
+    TRISA5 = 1; // Input for INC/DEC control
+    TRISB0 = 1; // INT0
+    TRISB1 = 1; // INT1
+    TRISB2 = 1; // INT2
+
+    // UART Setup (9600 baud)
+    TX1STAbits.BRGH = 1;
+    BAUD1CONbits.BRG16 = 1;
+    SP1BRG = (_XTAL_FREQ / (4UL * 9600)) - 1; // Baud rate calculation
+    RC1STAbits.SPEN = 1; // Enable serial port
+    TX1STAbits.TXEN = 1; // Enable transmitter
+
+    // ADC Setup
+    ANSELA0 = 1; // RA0 analog
+    ADCON0 = 0x01; // Enable ADC, select channel 0
+    ADCLK = 0x3F;  // Slowest clock for stability
+
+    // PWM Setup
+    CCP1CON = 0x8C; // CCP1: PWM mode
+    CCP2CON = 0x8C; // CCP2: PWM mode
+    CCPTMRS0 = 0x11; // CCP1 and CCP2 use TMR2
+    CCPR1L = 0;      // Initial duty cycle
+    CCPR2L = 0;
+    T2CLKCON = 0x01; // Clock = Fosc/4
+    T2HLT = 0x00;    // Free running mode
+    T2RST = 0x00;    // No reset source
+    PR2 = 255;       // Period
+    T2CON = 0x80;    // TMR2 ON, no prescaler
+
+    // Interrupt Setup
+    INT0PPS = 0x08; // RB0
+    INT1PPS = 0x09; // RB1
+    INT2PPS = 0x0A; // RB2
+    INTCON0bits.INT0EDG = 1; // Rising edge INT0
+    INTCON0bits.INT0IE = 1; // Enable INT0
+    PIE1bits.INT1IE = 1; // Enable INT1
+    PIE1bits.INT2IE = 1; // Enable INT2
+    INTCON0bits.GIE = 1; // Global Interrupt Enable
+
+    while(1) {
+        temperature = read_temperature(); // Read temperature
+        update_pwm(temperature); // Update PWM based on temperature
+        send_uart_data(temperature); // Send temperature data via UART
+        __delay_ms(500); // Delay for stability
+    }
+}

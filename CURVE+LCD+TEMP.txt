@@ -1,0 +1,240 @@
+// PIC18F458 Configuration Bit Settings
+// 'C' source line config statements
+// CONFIG1H
+#pragma config OSC = HS         // Oscillator Selection bits (HS oscillator)
+#pragma config OSCS = OFF       // Oscillator System Clock Switch Enable bit (Oscillator system clock switch option is disabled (main oscillator is source))
+// CONFIG2L
+#pragma config PWRT = OFF       // Power-up Timer Enable bit (PWRT disabled)
+#pragma config BOR = OFF        // Brown-out Reset Enable bit (Brown-out Reset disabled)
+#pragma config BORV = 25        // Brown-out Reset Voltage bits (VBOR set to 2.5V)
+// CONFIG2H
+#pragma config WDT = OFF        // Watchdog Timer Enable bit (WDT disabled (control is placed on the SWDTEN bit))
+#pragma config WDTPS = 128      // Watchdog Timer Postscale Select bits (1:128)
+// CONFIG4L
+#pragma config STVR = OFF       // Stack Full/Underflow Reset Enable bit (Stack Full/Underflow will not cause Reset)
+#pragma config LVP = OFF        // Low-Voltage ICSP Enable bit (Low-Voltage ICSP disabled)
+// CONFIG5L
+#pragma config CP0 = OFF        // Code Protection bit (Block 0 (000200-001FFFh) not code protected)
+#pragma config CP1 = OFF        // Code Protection bit (Block 1 (002000-003FFFh) not code protected)
+#pragma config CP2 = OFF        // Code Protection bit (Block 2 (004000-005FFFh) not code protected)
+#pragma config CP3 = OFF        // Code Protection bit (Block 3 (006000-007FFFh) not code protected)
+// CONFIG5H
+#pragma config CPB = OFF        // Boot Block Code Protection bit (Boot Block (000000-0001FFh) not code protected)
+#pragma config CPD = OFF        // Data EEPROM Code Protection bit (Data EEPROM not code protected)
+// CONFIG6L
+#pragma config WRT0 = OFF       // Write Protection bit (Block 0 (000200-001FFFh) not write protected)
+#pragma config WRT1 = OFF       // Write Protection bit (Block 1 (002000-003FFFh) not write protected)
+#pragma config WRT2 = OFF       // Write Protection bit (Block 2 (004000-005FFFh) not write protected)
+#pragma config WRT3 = OFF       // Write Protection bit (Block 3 (006000-007FFFh) not write protected)
+// CONFIG6H
+#pragma config WRTC = OFF       // Configuration Register Write Protection bit (Configuration registers (300000-3000FFh) not write protected)
+#pragma config WRTB = OFF       // Boot Block Write Protection bit (Boot Block (000000-0001FFh) not write protected)
+#pragma config WRTD = OFF       // Data EEPROM Write Protection bit (Data EEPROM not write protected)
+// CONFIG7L
+#pragma config EBTR0 = OFF      // Table Read Protection bit (Block 0 (000200-001FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR1 = OFF      // Table Read Protection bit (Block 1 (002000-003FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR2 = OFF      // Table Read Protection bit (Block 2 (004000-005FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR3 = OFF      // Table Read Protection bit (Block 3 (006000-007FFFh) not protected from Table Reads executed in other blocks)
+// CONFIG7H
+#pragma config EBTRB = OFF      // Boot Block Table Read Protection bit (Boot Block (000000-0001FFh) not protected from Table Reads executed in other blocks)
+
+#include <xc.h>
+#include <stdio.h>
+//#define _XTAL_FREQ 4000000  // Required for __delay_ms
+#define ldata PORTB
+#define rs    LATE2
+#define rw    LATE1
+#define en    LATE0
+
+volatile unsigned int currentSetpointIndex = 0;
+volatile float currentTemp = 25.0;
+float Kp = 2.5;
+
+// Function prototypes
+void delay(int ms);
+void lcdcmd(unsigned char value);
+void lcddata(unsigned char value);
+void lcd_init(void);
+void lcd_print_uint8(unsigned char v);
+void lcd_print_str(const char *str);
+void Send_Serial_Data(void);
+
+// Setpoint array (48 values, 5-second intervals)
+const float setpoints[48] = {
+    25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100,
+    105, 110, 115, 120, 125, 130, 135, 140, 145, 150,  // Pre-Heat
+    150, 155, 160, 165, 170, 175, 180, 180, 180, 180, 180, 180,  // Soak
+    185, 190, 195, 200, 205, 210, 215, 220,  // Reflow
+    215, 210  // Cooling
+};
+
+// — Interrupt Service Routine —//
+void __interrupt() ISR(void) {
+    // Timer1 interrupt (5-second interval)
+    if (TMR1IF == 1) {
+        // Clear flag
+        TMR1H = 0x0B;       // Reload for 5s
+        TMR1L = 0xDC;
+        TMR1IF = 0; 
+        if (++currentSetpointIndex >= 48) {
+            TMR1IE = 0;     // Disable timer
+            CCPR1L = 0;     // Heater off
+            ECCPR1L = 0;    // Fan off
+        }
+    }
+
+    // ADC conversion complete
+    if (ADIF == 1) {
+        // Read 10-bit ADC (assuming left-justified in your config)
+        currentTemp = ((ADRESH << 8) | ADRESL) * (250.0 / 1023.0);
+        ADIF = 0; // Clear ADC interrupt flag
+        GODONE = 1; // Start new conversion
+    }
+}
+
+// — Main Program — //
+void main(void) {
+    // Keep original register configurations
+    TRISB = 0x00;  
+    TRISE = 0x00;
+    TRISD4 = 0;
+    TRISC2 = 0;
+    TRISA0 = 1;
+    AN0 = 1;
+    ADCON0 = 0b00000001;
+    ADCON1 = 0b00000000;
+    CCP1CON = 0b00001100;   // Keep original PWM settings
+    ECCP1CON = 0b00001100;  // (Assuming ECCP1 is fan control)
+    T2CON = 0b00000001;
+    PR2 = 249;
+    TMR2ON = 1;
+    T1CON=0B00000001;
+    TMR1ON=1;
+    lcd_init();
+
+//    // Interrupt setup
+//    ADIE = 1;
+//    TMR1IE = 1;
+//    PEIE = 1;
+//    GIE = 1;
+//    ADON = 1;
+//    GODONE = 1;
+
+    while (1) {
+        // PWM control logic
+        float error = setpoints[currentSetpointIndex] - currentTemp;
+        float pwmDuty = Kp * (error > 0 ? error : -error);
+        if (pwmDuty > 255) pwmDuty = 255;
+
+        // Control outputs based on error sign
+        if (error > 0) {
+            CCPR1L = (int)pwmDuty;  // Heater
+            ECCPR1L = 0;            // Fan off
+        } else {
+            ECCPR1L = (int)pwmDuty;  // Fan
+            CCPR1L = 0;              // Heater off
+        }
+
+        // Update LCD
+        lcdcmd(0x01);  // Clear display
+        // Line 1: Temperature and status
+        lcdcmd(0x80);
+        lcd_print_str("Temp:");
+        lcd_print_uint8((unsigned char)currentTemp);
+        lcddata(0xDF);  // Degree symbol
+        lcddata('C');
+        lcddata(' ');
+        lcddata((error > 0) ? 'H' : 'F');
+        lcd_print_str(" ON");
+
+        // Line 2: Phase
+        lcdcmd(0xC0);
+        lcd_print_str("Stage:");
+        const char *phase;
+        if (currentSetpointIndex < 26) phase = "Pre-heat";
+        else if (currentSetpointIndex < 38) phase = "Soak";
+        else if (currentSetpointIndex < 46) phase = "Reflow";
+        else phase = "Cooling";
+        lcd_print_str(phase);
+
+        Send_Serial_Data();
+        delay(100);
+    }
+}
+
+// — Simple delay —//
+void delay(int ms) {
+    for (int i = 0; i < ms; i++)
+        for (int j = 0; j < 100; j++);
+}
+
+// — Initialize LCD in 8-bit mode —//
+void lcd_init(void) {
+    rw = 0;
+    delay(50);
+    lcdcmd(0x38);
+    delay(5);
+    lcdcmd(0x0C);
+    delay(5);
+    lcdcmd(0x06);
+    delay(5);
+    lcdcmd(0x01);
+    delay(5);
+    lcdcmd(0x80);
+    delay(5);
+}
+
+// — Send a command byte —//
+void lcdcmd(unsigned char value) {
+    ldata = value;
+    rs = 0;
+    en = 1;
+    delay(2);
+    en = 0;
+    delay(2);
+}
+
+// — Send a data byte —//
+void lcddata(unsigned char value) {
+    ldata = value;
+    rs = 1;
+    en = 1;
+    delay(2);
+    en = 0;
+    delay(2);
+}
+
+// — Print a 0–255 value as decimal —//
+void lcd_print_uint8(unsigned char v) {
+    unsigned char hundreds = v / 100;
+    unsigned char tens     = (v % 100) / 10;
+    unsigned char ones     = v % 10;
+
+    if (hundreds) {
+        lcddata('0' + hundreds);
+        lcddata('0' + tens);
+        lcddata('0' + ones);
+    } else if (tens) {
+        lcddata('0' + tens);
+        lcddata('0' + ones);
+    } else {
+        lcddata('0' + ones);
+    }
+}
+
+// ================ SERIAL COMMUNICATION ================
+void Send_Serial_Data(void) {
+    char buffer[50];
+    sprintf(buffer, "Set: %.1f, Temp: %.1f\r\n", 
+            setpoints[currentSetpointIndex], currentTemp);
+    for (int i = 0; buffer[i] != '\0'; i++) {
+        TXREG = buffer[i];
+        while (!TXSTAbits.TRMT);
+    }
+}
+
+void lcd_print_str(const char *str) {
+    while (*str) {
+        lcddata(*str++);
+    }
+}

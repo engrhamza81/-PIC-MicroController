@@ -1,0 +1,191 @@
+// PIC18F458 Configuration Bit Settings
+// 'C' source line config statements
+// CONFIG1H
+#pragma config OSC = HS         // Oscillator Selection bits (HS oscillator)
+#pragma config OSCS = OFF       // Oscillator System Clock Switch Enable bit (Oscillator system clock switch option is disabled (main oscillator is source))
+// CONFIG2L
+#pragma config PWRT = OFF       // Power-up Timer Enable bit (PWRT disabled)
+#pragma config BOR = OFF        // Brown-out Reset Enable bit (Brown-out Reset disabled)
+#pragma config BORV = 25        // Brown-out Reset Voltage bits (VBOR set to 2.5V)
+// CONFIG2H
+#pragma config WDT = OFF        // Watchdog Timer Enable bit (WDT disabled (control is placed on the SWDTEN bit))
+#pragma config WDTPS = 128      // Watchdog Timer Postscale Select bits (1:128)
+// CONFIG4L
+#pragma config STVR = OFF       // Stack Full/Underflow Reset Enable bit (Stack Full/Underflow will not cause Reset)
+#pragma config LVP = OFF        // Low-Voltage ICSP Enable bit (Low-Voltage ICSP disabled)
+// CONFIG5L
+#pragma config CP0 = OFF        // Code Protection bit (Block 0 (000200-001FFFh) not code protected)
+#pragma config CP1 = OFF        // Code Protection bit (Block 1 (002000-003FFFh) not code protected)
+#pragma config CP2 = OFF        // Code Protection bit (Block 2 (004000-005FFFh) not code protected)
+#pragma config CP3 = OFF        // Code Protection bit (Block 3 (006000-007FFFh) not code protected)
+// CONFIG5H
+#pragma config CPB = OFF        // Boot Block Code Protection bit (Boot Block (000000-0001FFh) not code protected)
+#pragma config CPD = OFF        // Data EEPROM Code Protection bit (Data EEPROM not code protected)
+// CONFIG6L
+#pragma config WRT0 = OFF       // Write Protection bit (Block 0 (000200-001FFFh) not write protected)
+#pragma config WRT1 = OFF       // Write Protection bit (Block 1 (002000-003FFFh) not write protected)
+#pragma config WRT2 = OFF       // Write Protection bit (Block 2 (004000-005FFFh) not write protected)
+#pragma config WRT3 = OFF       // Write Protection bit (Block 3 (006000-007FFFh) not write protected)
+// CONFIG6H
+#pragma config WRTC = OFF       // Configuration Register Write Protection bit (Configuration registers (300000-3000FFh) not write protected)
+#pragma config WRTB = OFF       // Boot Block Write Protection bit (Boot Block (000000-0001FFh) not write protected)
+#pragma config WRTD = OFF       // Data EEPROM Write Protection bit (Data EEPROM not write protected)
+// CONFIG7L
+#pragma config EBTR0 = OFF      // Table Read Protection bit (Block 0 (000200-001FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR1 = OFF      // Table Read Protection bit (Block 1 (002000-003FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR2 = OFF      // Table Read Protection bit (Block 2 (004000-005FFFh) not protected from Table Reads executed in other blocks)
+#pragma config EBTR3 = OFF      // Table Read Protection bit (Block 3 (006000-007FFFh) not protected from Table Reads executed in other blocks)
+// CONFIG7H
+#pragma config EBTRB = OFF      // Boot Block Table Read Protection bit (Boot Block (000000-0001FFh) not protected from Table Reads executed in other blocks)
+
+////////////////////////////////////////////////////////////////////////////////
+
+#include <xc.h>
+#include <stdint.h>
+#include<stdio.h>
+
+#define _XTAL_FREQ 4000000
+
+// DS18B20 pin
+#define DQ_DIR  TRISAbits.TRISA4
+#define DQ_PIN  PORTAbits.RA4
+#define DQ_LAT  LATAbits.LATA4
+
+// UART Functions
+void UART_Init(void) {
+  // Configure the serial port settings
+    SPEN = 1;   // Enable the serial port
+    TXEN = 1;   // Enable the transmitter
+    SYNC = 0;   // Set to asynchronous mode
+    BRGH = 1;   // High baud rate select bit
+    SPBRG = 25; // Set the baud rate generator value
+}
+
+void UART_SendChar(char c) {
+    while (!TXSTAbits.TRMT);
+    TXREG = c;
+}
+
+void UART_SendString(const char* str) {
+    while (*str) UART_SendChar(*str++);
+}
+
+// OneWire Functions
+uint8_t OneWire_Reset(void) {
+    DQ_DIR = 0; DQ_LAT = 0; __delay_us(480);  // Pull low
+    DQ_DIR = 1; __delay_us(70);              // Release and wait
+    uint8_t presence = !DQ_PIN;              // 0 = error, 1 = OK
+    __delay_us(410);
+    return presence;
+}
+
+//void OneWire_WriteBit(uint8_t bit) {
+//    DQ_DIR = 0; DQ_LAT = 0;
+//    __delay_us(bit ? 6 : 60);   // Short for 1, long for 0
+//    DQ_DIR = 1; __delay_us(bit ? 64 : 10);
+//}
+
+void OneWire_WriteBit(uint8_t bit) {
+    DQ_DIR = 0; DQ_LAT = 0;
+    
+    // Perform the delay for bit 0 and bit 1
+    if (bit) {
+        __delay_us(6);    // Short delay for bit 1
+    } else {
+        __delay_us(60);   // Long delay for bit 0
+    }
+
+    DQ_DIR = 1;   // Release the line
+    if (bit) {
+        __delay_us(64);   // Extra delay for bit 1
+    } else {
+        __delay_us(10);   // Extra delay for bit 0
+    }
+}
+
+
+uint8_t OneWire_ReadBit(void) {
+    uint8_t bit;
+    DQ_DIR = 0; DQ_LAT = 0; __delay_us(2);
+    DQ_DIR = 1; __delay_us(10);
+    bit = DQ_PIN;
+    __delay_us(50);
+    return bit;
+}
+
+void OneWire_WriteByte(uint8_t data) {
+    for (uint8_t i = 0; i < 8; i++)
+        OneWire_WriteBit(data & (1 << i));
+}
+
+uint8_t OneWire_ReadByte(void) {
+    uint8_t data = 0;
+    for (uint8_t i = 0; i < 8; i++)
+        if (OneWire_ReadBit()) data |= (1 << i);
+    return data;
+}
+
+// DS18B20 Temperature Read
+float DS18B20_ReadTemp(void) {
+    if (!OneWire_Reset()) return -1000.0; // Error
+
+    OneWire_WriteByte(0xCC); // Skip ROM
+    OneWire_WriteByte(0x44); // Convert T
+    __delay_ms(750);         // Wait for conversion
+
+    if (!OneWire_Reset()) return -1000.0;
+
+    OneWire_WriteByte(0xCC); // Skip ROM
+    OneWire_WriteByte(0xBE); // Read Scratchpad
+
+    uint8_t tempLSB = OneWire_ReadByte();
+    uint8_t tempMSB = OneWire_ReadByte();
+
+    int16_t rawTemp = (tempMSB << 8) | tempLSB;
+    return rawTemp * 0.0625; // Convert to °C
+}
+
+void SendTemperature(float temp) {
+    int t = (int)(temp * 100);  // e.g., 25.75°C ? 2575
+    int t_int = t / 100;
+    int t_frac = t % 100;
+
+    UART_SendString("Temp: ");
+    UART_SendChar('0' + (t_int / 10));
+    UART_SendChar('0' + (t_int % 10));
+    UART_SendChar('.');
+    UART_SendChar('0' + (t_frac / 10));
+    UART_SendChar('0' + (t_frac % 10));
+    UART_SendString("C\r\n");
+}
+
+
+
+void main(void) {
+    TRISA0=1;
+    
+    //OSCCON = 0x72;     // Internal 8MHz
+    UART_Init();       // Initialize UART
+    DQ_DIR = 1;        // Set DS18B20 pin as input
+    TRISC6 = 0;        // UART TX pin as output
+
+    __delay_ms(1000);  // Startup delay
+
+    while (1) {
+        float temp = DS18B20_ReadTemp();
+        if (temp > -100) {
+            SendTemperature(temp);  // <-- use the new function
+        } else {
+            UART_SendString("Sensor Error\r\n");
+        }
+
+        __delay_ms(1000);
+    }
+    
+   // OSCCON = 0b01110000;
+//    PWM_Init();
+    
+    while(1) {
+        
+    }
+}

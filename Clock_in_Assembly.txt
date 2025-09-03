@@ -1,0 +1,78 @@
+#include <xc.inc>
+
+  PSECT resetVect, class=CODE, delta=0  
+  resetVect:  
+    PAGESEL main      ; Select the page where 'main' is located  
+    GOTO main         ; Jump to the main routine  
+
+PSECT code, delta=0  
+ R1 EQU 0  
+ R2 EQU 2  
+ R3 EQU 3  
+ SEC EQU 4          ; Seconds register  
+ MIN EQU 5          ; Minutes register  
+ HRS EQU 6          ; Hours register  
+
+main:  
+   CLRF TRISD       ; Set PORTD as output  
+   CLRF TRISB       ; Set PORTB as output  
+   CLRF TRISC       ; Set PORTC as output  
+   CLRF SEC         ; Clear seconds register  
+   CLRF MIN         ; Clear minutes register  
+   CLRF HRS         ; Clear hours register  
+
+   LOOP:  
+    CALL DELAY      ; Call delay subroutine  
+    MOVF SEC,W      ; Move SEC to W register  
+    ADDLW 0x01      ; Increment SEC by 1  
+    DAW             ; Decimal adjust for BCD  
+    MOVWF SEC       ; Store updated SEC value  
+    MOVF SEC,W      ; Move SEC to W  
+    MOVWF PORTD     ; Display seconds on PORTD  
+    MOVLW 0x60      ; Load 60 (BCD for 60)  
+    CPFSEQ SEC      ; Compare SEC with 60  
+    GOTO LOOP       ; If not 60, continue loop  
+    CLRF SEC        ; Reset SEC when it reaches 60  
+
+    MOVF MIN,W      ; Move MIN to W  
+    ADDLW 0x01      ; Increment MIN by 1  
+    DAW             ; Decimal adjust for BCD  
+    MOVWF MIN       ; Store updated MIN value  
+    MOVF MIN,W      ; Move MIN to W  
+    MOVWF PORTB     ; Display minutes on PORTB  
+    MOVLW 0x60      ; Load 60  
+    CPFSEQ MIN      ; Compare MIN with 60  
+    GOTO LOOP       ; If not 60, continue loop  
+    CLRF MIN        ; Reset MIN when it reaches 60  
+
+    MOVF HRS,W      ; Move HRS to W  
+    ADDLW 0x01      ; Increment HRS by 1  
+    DAW             ; Decimal adjust for BCD  
+    MOVWF HRS       ; Store updated HRS value  
+    MOVF HRS,W      ; Move HRS to W  
+    MOVWF PORTC     ; Display hours on PORTC  
+    MOVLW 0x24      ; Load 24 (BCD for 24 hours)  
+    CPFSEQ HRS      ; Compare HRS with 24  
+    GOTO LOOP       ; If not 24, continue loop  
+    CLRF HRS        ; Reset HRS when it reaches 24  
+
+    ; Delay Subroutine  
+    DELAY:  
+   MOVLW 10  
+   MOVWF R1  
+    AGN3:  
+     MOVLW 20  
+   MOVWF R2  
+    AGN2:  
+     MOVLW 25  
+   MOVWF R3  
+    AGN1:  
+    DECFSZ R3       ; Decrement R3, skip next if zero  
+    GOTO AGN1  
+    DECFSZ R2       ; Decrement R2, skip next if zero  
+    GOTO AGN2  
+    DECFSZ R1       ; Decrement R1, skip next if zero  
+    GOTO AGN3  
+    RETURN          ; Return from subroutine  
+
+    END             ; End of program  

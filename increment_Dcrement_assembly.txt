@@ -1,0 +1,116 @@
+; PIC18F46K20 Configuration Bit Settings
+
+; Assembly source line config statements
+
+; CONFIG1H
+  CONFIG  FOSC = HS             ; Oscillator Selection bits (HS oscillator)
+  CONFIG  FCMEN = OFF           ; Fail-Safe Clock Monitor Enable bit (Fail-Safe Clock Monitor disabled)
+  CONFIG  IESO = ON             ; Internal/External Oscillator Switchover bit (Oscillator Switchover mode enabled)
+
+; CONFIG2L
+  CONFIG  PWRTEN = OFF          ; Power-up Timer Enable bit (PWRT disabled)
+  CONFIG  BOREN = OFF           ; Brown-out Reset Enable bits (Brown-out Reset disabled in hardware and software)
+  CONFIG  BORV = 18             ; Brown Out Reset Voltage bits (VBOR set to 1.8 V nominal)
+
+; CONFIG2H
+  CONFIG  WDTEN = OFF           ; Watchdog Timer Enable bit (WDT is controlled by SWDTEN bit of the WDTCON register)
+  CONFIG  WDTPS = 32768         ; Watchdog Timer Postscale Select bits (1:32768)
+
+; CONFIG3H
+  CONFIG  CCP2MX = PORTC        ; CCP2 MUX bit (CCP2 input/output is multiplexed with RC1)
+  CONFIG  PBADEN = OFF          ; PORTB A/D Enable bit (PORTB<4:0> pins are configured as digital I/O on Reset)
+  CONFIG  LPT1OSC = OFF         ; Low-Power Timer1 Oscillator Enable bit (Timer1 configured for higher power operation)
+  CONFIG  HFOFST = ON           ; HFINTOSC Fast Start-up (HFINTOSC starts clocking the CPU without waiting for the oscillator to stablize.)
+  CONFIG  MCLRE = ON            ; MCLR Pin Enable bit (MCLR pin enabled; RE3 input pin disabled)
+
+; CONFIG4L
+  CONFIG  STVREN = OFF          ; Stack Full/Underflow Reset Enable bit (Stack full/underflow will not cause Reset)
+  CONFIG  LVP = ON              ; Single-Supply ICSP Enable bit (Single-Supply ICSP enabled)
+  CONFIG  XINST = OFF           ; Extended Instruction Set Enable bit (Instruction set extension and Indexed Addressing mode disabled (Legacy mode))
+
+; CONFIG5L
+  CONFIG  CP0 = OFF             ; Code Protection Block 0 (Block 0 (000800-003FFFh) not code-protected)
+  CONFIG  CP1 = OFF             ; Code Protection Block 1 (Block 1 (004000-007FFFh) not code-protected)
+  CONFIG  CP2 = OFF             ; Code Protection Block 2 (Block 2 (008000-00BFFFh) not code-protected)
+  CONFIG  CP3 = OFF             ; Code Protection Block 3 (Block 3 (00C000-00FFFFh) not code-protected)
+
+; CONFIG5H
+  CONFIG  CPB = OFF             ; Boot Block Code Protection bit (Boot block (000000-0007FFh) not code-protected)
+  CONFIG  CPD = OFF             ; Data EEPROM Code Protection bit (Data EEPROM not code-protected)
+
+; CONFIG6L
+  CONFIG  WRT0 = OFF            ; Write Protection Block 0 (Block 0 (000800-003FFFh) not write-protected)
+  CONFIG  WRT1 = OFF            ; Write Protection Block 1 (Block 1 (004000-007FFFh) not write-protected)
+  CONFIG  WRT2 = OFF            ; Write Protection Block 2 (Block 2 (008000-00BFFFh) not write-protected)
+  CONFIG  WRT3 = OFF            ; Write Protection Block 3 (Block 3 (00C000h-00FFFFh) not write-protected)
+
+; CONFIG6H
+  CONFIG  WRTC = OFF            ; Configuration Register Write Protection bit (Configuration registers (300000-3000FFh) not write-protected)
+  CONFIG  WRTB = OFF            ; Boot Block Write Protection bit (Boot Block (000000-0007FFh) not write-protected)
+  CONFIG  WRTD = OFF            ; Data EEPROM Write Protection bit (Data EEPROM not write-protected)
+
+; CONFIG7L
+  CONFIG  EBTR0 = OFF           ; Table Read Protection Block 0 (Block 0 (000800-003FFFh) not protected from table reads executed in other blocks)
+  CONFIG  EBTR1 = OFF           ; Table Read Protection Block 1 (Block 1 (004000-007FFFh) not protected from table reads executed in other blocks)
+  CONFIG  EBTR2 = OFF           ; Table Read Protection Block 2 (Block 2 (008000-00BFFFh) not protected from table reads executed in other blocks)
+  CONFIG  EBTR3 = OFF           ; Table Read Protection Block 3 (Block 3 (00C000-00FFFFh) not protected from table reads executed in other blocks)
+
+; CONFIG7H
+  CONFIG  EBTRB = OFF           ; Boot Block Table Read Protection bit (Boot Block (000000-0007FFh) not protected from table reads executed in other blocks)
+
+// config statements should precede project file includes.
+#include <xc.inc>
+
+  PSECT resetVect, class=CODE, delta=0
+  resetVect:
+    PAGESEL main
+    GOTO main
+
+PSECT code, delta=0
+
+main:
+   BANKSEL TRISB
+   BSF TRISB, 0          ; Set RB0 as input
+   BSF TRISB, 1          ; Set RB1 as input
+   BANKSEL ANSELH
+   BCF ANSELH, 0         ; Set RB0 as digital I/O
+   BCF ANSELH, 1         ; Set RB1 as digital I/O
+   BANKSEL WPUB
+   BCF WPUB, 0           ; Disable weak pull-up on RB0
+   BCF WPUB, 1           ; Disable weak pull-up on RB1
+   BANKSEL TRISD
+   CLRF TRISD            ; Set PORTD as output
+   CLRF LATD             ; Clear LATD (initialize to 0x00)
+
+LOOP:
+    BTFSS PORTB, 0       ; Check if RB0 is pressed
+    GOTO LOOP1
+    GOTO INCREMENT       ; If RB0 is pressed, go to INCREMENT
+LOOP1:    
+    BTFSS PORTB, 1       ; Check if RB1 is pressed
+    GOTO LOOP
+    GOTO DECREMENT       ; If RB1 is pressed, go to DECREMENT
+             
+
+INCREMENT:
+    MOVF LATD, W         ; Move LATD value to WREG
+    ADDLW 1              ; Add 1 to WREG
+    MOVWF LATD           ; Move the result back to LATD
+    GOTO WAIT_RELEASE_RB0 ; Wait for RB0 to be released
+
+DECREMENT:
+    MOVF LATD, W         ; Move LATD value to WREG
+    DECF WREG, W         ; Decrement WREG (WREG = WREG - 1)
+    MOVWF LATD
+    GOTO WAIT_RELEASE_RB1 ; Wait for RB1 to be released
+
+WAIT_RELEASE_RB0:
+    BTFSC PORTB, 0       ; Wait for RB0 to be released
+    GOTO WAIT_RELEASE_RB0 ; If RB0 is still pressed, keep waiting
+    GOTO LOOP            ; If RB0 is released, go back to LOOP
+
+WAIT_RELEASE_RB1:
+    BTFSC PORTB, 1       ; Wait for RB1 to be released
+    GOTO WAIT_RELEASE_RB1 ; If RB1 is still pressed, keep waiting
+    GOTO LOOP1            ; If RB1 is released, go back to LOOP
+     END
